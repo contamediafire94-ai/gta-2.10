@@ -39,6 +39,7 @@ CSnapShotHelper* pSnapShotHelper = nullptr;
 CAudioStream* pAudioStream = nullptr;
 CJavaWrapper* pJavaWrapper = nullptr;
 CSettings* pSettings = nullptr;
+extern char g_launcherNickname[25];
 //CVoice* pVoice = nullptr;
 
 MaterialTextGenerator* pMaterialTextGenerator = nullptr;
@@ -82,7 +83,14 @@ void ReadSettingFile()
 	fclose(fp);*/
 
 	pSettings = new CSettings();
-
+    if (g_launcherNickname[0] != '\0') {
+    snprintf(
+        pSettings->Get().szNickName,
+        sizeof(pSettings->Get().szNickName),
+        "%s",
+        g_launcherNickname
+    );
+	}
 	firebase::crashlytics::SetUserId(pSettings->Get().szNickName);
 }
 /*#include <GLES2/gl2.h>
@@ -341,6 +349,9 @@ extern "C" {
 	}
 
 JNIEXPORT void JNICALL Java_com_samp_mobile_game_SAMP_setLauncherNickname(
+        JNIEnv *pEnv,
+        jobject thiz,
+        jstring nickname)
 {
     if (nickname == nullptr) return;
 
@@ -363,8 +374,7 @@ JNIEXPORT void JNICALL Java_com_samp_mobile_game_SAMP_setLauncherNickname(
 	{
 		if(pSettings)
 		{
-			if(pSettings->Get().iAndroidKeyboard)
-				pJavaWrapper->HideKeyboard();
+			pSettings = new CSettings();
 		}
 	}
 	JNIEXPORT void JNICALL Java_com_samp_mobile_game_ui_dialog_DialogManager_sendDialogResponse(JNIEnv* pEnv, jobject thiz, jint i3, jint i, jint i2, jbyteArray str)
