@@ -332,13 +332,26 @@ void GameBackground()
     pJavaWrapper->ShowMenu();
 }
 */
-
+char g_launcherNickname[25] = {0};
 extern "C" {
 	JNIEXPORT void JNICALL Java_com_samp_mobile_game_SAMP_initializeSAMP(JNIEnv *pEnv, jobject thiz)
-	{
+  {
 		pJavaWrapper = new CJavaWrapper(pEnv, thiz);
 
 	}
+
+JNIEXPORT void JNICALL Java_com_samp_mobile_game_SAMP_setLauncherNickname(
+{
+    if (nickname == nullptr) return;
+
+    const char* value = pEnv->GetStringUTFChars(nickname, nullptr);
+
+    if (value != nullptr)
+    {
+        snprintf(g_launcherNickname, sizeof(g_launcherNickname), "%s", value);
+        pEnv->ReleaseStringUTFChars(nickname, value);
+    }
+}
 	JNIEXPORT void JNICALL Java_com_samp_mobile_game_SAMP_onInputEnd(JNIEnv *pEnv, jobject thiz, jbyteArray str)
 	{
 		if(pUI)
