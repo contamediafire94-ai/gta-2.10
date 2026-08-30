@@ -183,16 +183,20 @@ public class SAMP extends GTASA implements CustomKeyboard.InputListener, HeightP
 
         instance = this;
 
-        try {
-            initializeSAMP();
-        } catch (UnsatisfiedLinkError e5) {
-            Log.e(TAG, e5.getMessage());
-        }
-
+try {
+    if (nickname != null && !nickname.isEmpty()) {
+        setLauncherNickname(nickname);
     }
 
-    private native void initializeSAMP();
-    private native void setLauncherNickname(String nickname);
+    initializeSAMP();
+
+} catch (UnsatisfiedLinkError e5) {
+    Log.e(TAG, e5.getMessage());
+}
+}
+
+private native void initializeSAMP();
+private native void setLauncherNickname(String nickname);
 
 
     @Override
