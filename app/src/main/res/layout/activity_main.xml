@@ -27,7 +27,7 @@
         android:paddingRight="18dp"
         android:background="#F5080808"
         android:hint="Nome_Sobrenome"
-        android:hintTextColor="#888888"
+        android:textColorHint="#888888"
         android:textColor="#FFFFFF"
         android:textSize="17sp"
         android:singleLine="true"
