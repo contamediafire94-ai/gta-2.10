@@ -192,7 +192,7 @@ public class SAMP extends GTASA implements CustomKeyboard.InputListener, HeightP
     }
 
     private native void initializeSAMP();
-
+    private native void setLauncherNickname(String nickname);
 
 
     @Override
