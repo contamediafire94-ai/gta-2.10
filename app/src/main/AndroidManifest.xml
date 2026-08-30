@@ -49,29 +49,15 @@
 
         <!-- MainActivity с явным android:exported -->
         <activity
-            android:name="com.samp.mobile.launcher.activity.MainActivity"
-            android:screenOrientation="landscape"
-            android:theme="@style/Theme.AppCompat.NoActionBar"
-            android:windowSoftInputMode="adjustNothing"
-            android:exported="true">
-        <intent-filter>
-    <action android:name="android.intent.action.MAIN" />
-    <category android:name="android.intent.category.LAUNCHER" />
-</intent-filter>
-        </activity>
+    android:name="com.samp.mobile.launcher.activity.MainActivity"
+    android:screenOrientation="landscape"
+    android:theme="@style/Theme.AppCompat.NoActionBar"
+    android:windowSoftInputMode="adjustNothing"
+    android:exported="true">
 
-        <activity
-            android:name="com.samp.mobile.game.SAMP"
-            android:screenOrientation="landscape"
-            android:theme="@style/Theme.AppCompat.NoActionBar"
-            android:configChanges="keyboard|keyboardHidden|orientation|screenSize|uiMode"
-            android:launchMode="singleTask"
-            android:windowSoftInputMode="adjustPan"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity>
-    </application>
-</manifest>
+    <intent-filter>
+        <action android:name="android.intent.action.MAIN" />
+        <category android:name="android.intent.category.LAUNCHER" />
+    </intent-filter>
+
+</activity>
