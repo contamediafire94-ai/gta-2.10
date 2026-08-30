@@ -1,0 +1,40 @@
+name: Build DZ6 APK
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Baixar projeto
+        uses: actions/checkout@v4
+
+      - name: Configurar Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Configurar Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Instalar NDK e CMake
+        run: |
+          sdkmanager "platforms;android-34"
+          sdkmanager "build-tools;34.0.0"
+          sdkmanager "ndk;26.2.11394342"
+          sdkmanager "cmake;3.22.1"
+
+      - name: Permissão do Gradle
+        run: chmod +x gradlew
+
+      - name: Compilar APK
+        run: ./gradlew :app:assembleDebug --stacktrace
+
+      - name: Salvar APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: DZ6-Roleplay-APK
+          path: app/build/outputs/apk/debug/*.apk
