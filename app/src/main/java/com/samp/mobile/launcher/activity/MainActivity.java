@@ -42,7 +42,8 @@ public class MainActivity extends AppCompatActivity {
             prefs.edit().putString("nickname", nick).apply();
 
             Intent intent = new Intent(MainActivity.this, SAMP.class);
-            startActivity(intent);
+intent.putExtra("nickname", nick);
+startActivity(intent););
         });
     }
 }
