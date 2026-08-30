@@ -43,7 +43,7 @@ public class MainActivity extends AppCompatActivity {
 
             Intent intent = new Intent(MainActivity.this, SAMP.class);
 intent.putExtra("nickname", nick);
-startActivity(intent););
+startActivity(intent);
         });
     }
 }
