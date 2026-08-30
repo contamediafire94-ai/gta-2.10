@@ -3,6 +3,8 @@ package com.samp.mobile.game;
 import android.os.Bundle;
 import android.util.Log;
 import android.view.KeyEvent;
+import android.view.View;
+import android.view.WindowManager;
 
 import com.joom.paranoid.Obfuscate;
 import com.samp.mobile.game.ui.AttachEdit;
@@ -13,9 +15,9 @@ import com.samp.mobile.game.ui.dialog.DialogManager;
 import java.io.UnsupportedEncodingException;
 import java.nio.charset.StandardCharsets;
 
-
 @Obfuscate
 public class SAMP extends GTASA implements CustomKeyboard.InputListener, HeightProvider.HeightListener {
+
     private static final String TAG = "SAMP";
     private static SAMP instance;
 
@@ -32,9 +34,387 @@ public class SAMP extends GTASA implements CustomKeyboard.InputListener, HeightP
         return instance;
     }
 
-    private void showTab()
-    {
+    /**
+     * Esconde barra de status e barra de navegação.
+     */
+    private void hideSystemUI() {
 
+        getWindow().setFlags(
+                WindowManager.LayoutParams.FLAG_FULLSCREEN,
+                WindowManager.LayoutParams.FLAG_FULLSCREEN
+        );
+
+        getWindow().getDecorView().setSystemUiVisibility(
+                View.SYSTEM_UI_FLAG_FULLSCREEN
+                        | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                        | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                        | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                        | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                        | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+        );
+    }
+
+    private void showTab() {
+
+    }
+
+    private void hideTab() {
+
+    }
+
+    private void setTab(int id, String name, int score, int ping) {
+
+    }
+
+    private void clearTab() {
+
+    }
+
+    private void showLoadingScreen() {
+
+    }
+
+    private void hideLoadingScreen() {
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                if (mLoadingScreen != null) {
+                    mLoadingScreen.hide();
+                }
+            }
+        });
+    }
+
+    public void setPauseState(boolean pause) {
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+
+                if (pause) {
+
+                    if (mDialog != null) {
+                        mDialog.hideWithoutReset();
+                    }
+
+                    if (mAttachEdit != null) {
+                        mAttachEdit.hideWithoutReset();
+                    }
+
+                } else {
+
+                    if (mDialog != null && mDialog.isShow) {
+                        mDialog.showWithOldContent();
+                    }
+
+                    if (mAttachEdit != null && mAttachEdit.isShow) {
+                        mAttachEdit.showWithoutReset();
+                    }
+                }
+            }
+        });
+    }
+
+    public void exitGame() {
+        finishAndRemoveTask();
+        System.exit(0);
+    }
+
+    public void showDialog(
+            int dialogId,
+            int dialogTypeId,
+            byte[] bArr,
+            byte[] bArr2,
+            byte[] bArr3,
+            byte[] bArr4
+    ) {
+
+        final String caption =
+                new String(bArr, StandardCharsets.UTF_8);
+
+        final String content =
+                new String(bArr2, StandardCharsets.UTF_8);
+
+        final String leftBtnText =
+                new String(bArr3, StandardCharsets.UTF_8);
+
+        final String rightBtnText =
+                new String(bArr4, StandardCharsets.UTF_8);
+
+        runOnUiThread(() -> {
+
+            if (mDialog != null) {
+                mDialog.show(
+                        dialogId,
+                        dialogTypeId,
+                        caption,
+                        content,
+                        leftBtnText,
+                        rightBtnText
+                );
+            }
+
+        });
+    }
+
+    private native void onInputEnd(byte[] str);
+
+    @Override
+    public void OnInputEnd(String str) {
+
+        byte[] toReturn = null;
+
+        try {
+
+            toReturn = str.getBytes("windows-1251");
+
+        } catch (UnsupportedEncodingException e) {
+
+            Log.e(TAG, "Erro ao converter texto", e);
+
+        }
+
+        try {
+
+            onInputEnd(toReturn);
+
+        } catch (UnsatisfiedLinkError e) {
+
+            Log.e(TAG, "Erro nativo em onInputEnd", e);
+
+        }
+    }
+
+    private void showKeyboard() {
+        runOnUiThread(new Runnable() {
+
+            @Override
+            public void run() {
+
+                Log.d("AXL", "showKeyboard()");
+
+                if (mKeyboard != null) {
+                    mKeyboard.ShowInputLayout();
+                }
+            }
+        });
+    }
+
+    private void hideKeyboard() {
+        runOnUiThread(new Runnable() {
+
+            @Override
+            public void run() {
+
+                if (mKeyboard != null) {
+                    mKeyboard.HideInputLayout();
+                }
+            }
+        });
+    }
+
+    private void showEditObject() {
+        runOnUiThread(new Runnable() {
+
+            @Override
+            public void run() {
+
+                if (mAttachEdit != null) {
+                    mAttachEdit.show();
+                }
+            }
+        });
+    }
+
+    private void hideEditObject() {
+        runOnUiThread(new Runnable() {
+
+            @Override
+            public void run() {
+
+                if (mAttachEdit != null) {
+                    mAttachEdit.hide();
+                }
+            }
+        });
+    }
+
+    @Override
+    public void onCreate(Bundle savedInstanceState) {
+
+        Log.i(TAG, "**** onCreate");
+
+        super.onCreate(savedInstanceState);
+
+        /*
+         * Tela cheia antes de inicializar
+         * a interface do SA-MP.
+         */
+        hideSystemUI();
+
+        String nickname =
+                getIntent().getStringExtra("nickname");
+
+        // mHeightProvider = new HeightProvider(this);
+
+        mKeyboard =
+                new CustomKeyboard(this);
+
+        mDialog =
+                new DialogManager(this);
+
+        mAttachEdit =
+                new AttachEdit(this);
+
+        mLoadingScreen =
+                new LoadingScreen(this);
+
+        instance = this;
+
+        try {
+
+            /*
+             * Nick recebido do launcher DZ6.
+             */
+            if (nickname != null && !nickname.trim().isEmpty()) {
+
+                setLauncherNickname(
+                        nickname.trim()
+                );
+            }
+
+            /*
+             * Inicializa o cliente SA-MP.
+             */
+            initializeSAMP();
+
+        } catch (UnsatisfiedLinkError e) {
+
+            Log.e(
+                    TAG,
+                    "Erro ao inicializar biblioteca nativa do SA-MP",
+                    e
+            );
+        }
+    }
+
+    private native void initializeSAMP();
+
+    private native void setLauncherNickname(String nickname);
+
+    @Override
+    public void onStart() {
+
+        Log.i(TAG, "**** onStart");
+
+        super.onStart();
+
+        hideSystemUI();
+    }
+
+    @Override
+    public void onRestart() {
+
+        Log.i(TAG, "**** onRestart");
+
+        super.onRestart();
+
+        hideSystemUI();
+    }
+
+    @Override
+    public void onResume() {
+
+        Log.i(TAG, "**** onResume");
+
+        super.onResume();
+
+        hideSystemUI();
+
+        // mHeightProvider.init(view);
+    }
+
+    /**
+     * Se o Android tentar mostrar as barras,
+     * esconde novamente.
+     */
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+
+        super.onWindowFocusChanged(hasFocus);
+
+        if (hasFocus) {
+            hideSystemUI();
+        }
+    }
+
+    public native void onEventBackPressed();
+
+    @Override
+    public void onBackPressed() {
+
+        try {
+
+            onEventBackPressed();
+
+        } catch (UnsatisfiedLinkError e) {
+
+            Log.e(TAG, "Erro em onEventBackPressed", e);
+        }
+    }
+
+    @Override
+    public boolean onKeyDown(int keyCode, KeyEvent event) {
+
+        if (keyCode == KeyEvent.KEYCODE_BACK) {
+
+            try {
+
+                onEventBackPressed();
+
+            } catch (UnsatisfiedLinkError e) {
+
+                Log.e(TAG, "Erro no botão voltar", e);
+            }
+
+            return true;
+        }
+
+        return super.onKeyDown(keyCode, event);
+    }
+
+    @Override
+    public void onPause() {
+
+        Log.i(TAG, "**** onPause");
+
+        super.onPause();
+    }
+
+    @Override
+    public void onStop() {
+
+        Log.i(TAG, "**** onStop");
+
+        super.onStop();
+    }
+
+    @Override
+    public void onDestroy() {
+
+        Log.i(TAG, "**** onDestroy");
+
+        instance = null;
+
+        super.onDestroy();
+    }
+
+    @Override
+    public void onHeightChanged(int orientation, int height) {
+
+        // mKeyboard.onHeightChanged(height);
+        // mDialog.onHeightChanged(height);
+    }
+}
     }
 
     private void hideTab()
