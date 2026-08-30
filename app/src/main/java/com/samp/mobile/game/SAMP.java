@@ -165,7 +165,10 @@ public class SAMP extends GTASA implements CustomKeyboard.InputListener, HeightP
     @Override
     public void onCreate(Bundle savedInstanceState) {
         Log.i(TAG, "**** onCreate");
+        
         super.onCreate(savedInstanceState);
+
+        String nickname = getIntent().getStringExtra("nickname");
 
         //mHeightProvider = new HeightProvider(this);
 
