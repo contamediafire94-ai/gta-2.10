@@ -806,8 +806,8 @@ void CGame::Process() {
 
     //	CCutsceneMgr::Update();
 
-    if ( !(CTimer::m_CodePause << 0x18) )
-    {
+    if ( !(CTimer::m_CodePause << 0x18) &&
+     (!pNetGame || pNetGame->GetGameState() != GAMESTATE_CONNECTED) )
         auto gMobileMenu = (uintptr_t *) (g_libGTASA + (VER_x32 ? 0x006E0074 : 0x8BE780));
         ((void(*)(uintptr_t*))(g_libGTASA + (VER_x32 ? 0x0029A730 + 1 : 0x356A7C)))(gMobileMenu); // MobileMenu::Update
     }
