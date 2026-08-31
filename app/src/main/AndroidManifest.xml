@@ -27,7 +27,7 @@
         android:requestLegacyExternalStorage="true"
         android:banner="@drawable/beta_tester_icon"
         android:hardwareAccelerated="false"
-        android:icon="@drawable/dz6_icon"
+        android:icon="@drawable/beta_tester_icon"
         android:isGame="true"
         android:largeHeap="true"
         android:label="@string/app_name"
