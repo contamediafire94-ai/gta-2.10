@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<RelativeLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#000000">
+
+    <!-- FUNDO DO LAUNCHER -->
+    <ImageView
+        android:id="@+id/background"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:src="@drawable/beta_tester_launcher_bg"
+        android:scaleType="fitXY" />
+
+    <!-- CAMPO REAL DO NICK, POSICIONADO SOBRE O CAMPO DESENHADO NA ARTE -->
+    <EditText
+        android:id="@+id/edit_nick"
+        android:layout_width="295dp"
+        android:layout_height="56dp"
+        android:layout_alignParentLeft="true"
+        android:layout_alignParentBottom="true"
+        android:layout_marginLeft="98dp"
+        android:layout_marginBottom="119dp"
+        android:paddingLeft="14dp"
+        android:paddingRight="12dp"
+        android:background="#F20A0A0A"
+        android:hint="Nome_Sobrenome"
+        android:textColorHint="#777777"
+        android:textColor="#FFFFFF"
+        android:textSize="18sp"
+        android:gravity="center_vertical"
+        android:includeFontPadding="false"
+        android:singleLine="true"
+        android:maxLength="24"
+        android:inputType="textNoSuggestions" />
+
+    <!-- ÁREA REAL CLICÁVEL, POSICIONADA SOBRE O BOTÃO JOGAR DA ARTE -->
+    <Button
+        android:id="@+id/button_play"
+        android:layout_width="275dp"
+        android:layout_height="70dp"
+        android:layout_alignParentRight="true"
+        android:layout_alignParentBottom="true"
+        android:layout_marginRight="180dp"
+        android:layout_marginBottom="106dp"
+        android:background="@android:color/transparent"
+        android:text=""
+        android:minWidth="0dp"
+        android:minHeight="0dp"
+        android:padding="0dp" />
+
+</RelativeLayout>
