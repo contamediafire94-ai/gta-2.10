@@ -848,7 +848,7 @@ void CGame::Process() {
             if (pNetGame && pNetGame->GetGameState() == GAMESTATE_CONNECTED)
             {
                 ++sampConnectedWarmupFrames;
-                if (sampConnectedWarmupFrames >= 60)
+                if (sampConnectedWarmupFrames >= 3600)
                 {
                     stopSinglePlayerScripts = true;
                     FLog("SA-MP connected; GTA story scripts stopped after transition warm-up");
