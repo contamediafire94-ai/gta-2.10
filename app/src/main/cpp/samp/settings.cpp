@@ -15,7 +15,7 @@ CSettings::CSettings()
 
     INIReader reader(path);
 
-    // DZ6: se o INI estiver ausente ou inválido, usa os valores padrão.
+    //  se o INI estiver ausente ou inválido, usa os valores padrão.
     // Não encerra mais o processo com std::terminate().
     if (reader.ParseError() < 0)
     {
