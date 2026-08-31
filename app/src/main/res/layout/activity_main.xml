@@ -6,12 +6,12 @@
     android:layout_height="match_parent"
     android:background="#000000">
 
-    <!-- FUNDO DZ6 -->
+    <!-- FUNDO BETA -->
     <ImageView
         android:id="@+id/background"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:src="@drawable/dz6_launcher_bg"
+        android:src="@drawable/beta_tester_launcher_bg"
         android:scaleType="fitXY" />
 
     <!-- CAMPO DE NICK -->
