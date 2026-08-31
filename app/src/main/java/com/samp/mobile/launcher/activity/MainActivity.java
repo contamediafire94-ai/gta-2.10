@@ -25,7 +25,7 @@ public class MainActivity extends AppCompatActivity {
         editNick = findViewById(R.id.edit_nick);
         Button jogar = findViewById(R.id.button_play);
 
-        prefs = getSharedPreferences("dz6_config", MODE_PRIVATE);
+        prefs = getSharedPreferences("beta_tester_config", MODE_PRIVATE);
 
         String nickSalvo = prefs.getString("nickname", "");
         editNick.setText(nickSalvo);
