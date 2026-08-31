@@ -43,7 +43,7 @@ bool ImGuiWrapper::initialize()
 	io.DisplayFramebufferScale = ImVec2(1.0f, 1.0f);
 
 	/*
-	 * DZ6: usa temporariamente a fonte interna do ImGui.
+	 *  usa temporariamente a fonte interna do ImGui.
 	 *
 	 * O cliente estava abortando dentro de AddFontFromFileTTF()
 	 * quando a fonte externa em SAMP/fonts não conseguia ser aberta.
