@@ -25,7 +25,7 @@
     <application
         android:gwpAsanMode="always"
         android:requestLegacyExternalStorage="true"
-        android:banner="@drawable/dz6_icon"
+        android:banner="@drawable/beta_tester_icon"
         android:hardwareAccelerated="false"
         android:icon="@drawable/dz6_icon"
         android:isGame="true"
