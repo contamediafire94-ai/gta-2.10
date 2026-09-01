@@ -1522,13 +1522,9 @@ if(!strncmp(r1+12, "mainV1.scm", 10))
         FLog("Loading weapon.dat..");
     }
 
-    // CINFO.BIN e o cache de colisao.
-    // IMPORTANTE: se marcarmos um arquivo vazio como "existente", o GTA
-    // tenta ler um cache invalido e pode crashar durante LoadScene.
-    //
-    // Para este teste, sempre criamos/truncamos CINFO_APP.BIN, mas
-    // informamos ao GTA que o cache AINDA NAO EXISTE. Assim ele reconstrói
-    // o cache usando um FILE* valido e depois consegue escrever nele.
+    // CINFO.BIN valido importado pelo launcher para CINFO_APP.BIN.
+    // Abre em leitura+escrita porque o CColAccel le o cache durante
+    // startCache e pode atualiza-lo em endCache.
     if (!strcmp(r1, "CINFO.BIN"))
     {
 #if VER_x32
@@ -1536,22 +1532,23 @@ if(!strncmp(r1+12, "mainV1.scm", 10))
 #else
         auto *st = (stFile*)malloc(0x10);
 #endif
+        st->isFileExist = false;
 
         sprintf(path, "%sCINFO_APP.BIN", g_pszStorage);
 
         errno = 0;
-        FILE *f = fopen(path, "w+b");
+        FILE *f = fopen(path, "r+b");
 
         if (f)
         {
-            st->isFileExist = false;
+            st->isFileExist = true;
             st->f = f;
-            FLog("CINFO rebuild mode OK | %s", path);
+            FLog("CINFO imported OK | %s", path);
             return st;
         }
 
         int openErr = errno;
-        FLog("CINFO rebuild mode FAIL | path=%s | errno=%d | %s",
+        FLog("CINFO imported FAIL | path=%s | errno=%d | %s",
              path, openErr, strerror(openErr));
         free(st);
         return nullptr;
