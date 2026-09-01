@@ -1475,7 +1475,15 @@ stFile* NvFOpen(const char* r0, const char* r1, int r2, int r3)
     }
 
     // ----------------------------
-    if(!strncmp(r1+12, "mainV1.scm", 10))
+    
+    // stream.ini copiado pelo proprio app para evitar EACCES/Permission denied
+    if (!strcmp(r1, "stream.ini") || !strcmp(r1, "STREAM.INI"))
+    {
+        sprintf(path, "%sstream_app.ini", g_pszStorage);
+        FLog("Redirecting STREAM.INI -> %s", path);
+    }
+
+if(!strncmp(r1+12, "mainV1.scm", 10))
     {
         // TEMP TEST:
         // Let this GTA 2.10 base load its matching mainV1.scm instead of
@@ -1568,7 +1576,7 @@ unsigned int MainMenuScreen__Update_hook(uintptr_t thiz, float a2)
 void (*StartGameScreen__OnNewGameCheck)();
 void StartGameScreen__OnNewGameCheck_hook()
 {
-    // отключить кнопку начать игру
+    // Ð¾Ñ‚ÐºÐ»ÑŽÑ‡Ð¸Ñ‚ÑŒ ÐºÐ½Ð¾Ð¿ÐºÑƒ Ð½Ð°Ñ‡Ð°Ñ‚ÑŒ Ð¸Ð³Ñ€Ñƒ
     if(g_bPlaySAMP)
         return;
 
@@ -1736,27 +1744,27 @@ void (*RLEDecompress)(uint8_t* pDest, size_t uiDestSize, uint8_t const* pSrc, si
 void RLEDecompress_hook(uint8_t* pDest, size_t uiDestSize, const uint8_t* pSrc, size_t uiSegSize, uint32_t uiEscape) {
 
     if (!pDest || !pSrc || uiDestSize == 0 || uiSegSize == 0) {
-        // Обработка некорректных входных данных или размеров
-        // Здесь можно сгенерировать исключение или вернуть код ошибки
+        // ÐžÐ±Ñ€Ð°Ð±Ð¾Ñ‚ÐºÐ° Ð½ÐµÐºÐ¾Ñ€Ñ€ÐµÐºÑ‚Ð½Ñ‹Ñ… Ð²Ñ…Ð¾Ð´Ð½Ñ‹Ñ… Ð´Ð°Ð½Ð½Ñ‹Ñ… Ð¸Ð»Ð¸ Ñ€Ð°Ð·Ð¼ÐµÑ€Ð¾Ð²
+        // Ð—Ð´ÐµÑÑŒ Ð¼Ð¾Ð¶Ð½Ð¾ ÑÐ³ÐµÐ½ÐµÑ€Ð¸Ñ€Ð¾Ð²Ð°Ñ‚ÑŒ Ð¸ÑÐºÐ»ÑŽÑ‡ÐµÐ½Ð¸Ðµ Ð¸Ð»Ð¸ Ð²ÐµÑ€Ð½ÑƒÑ‚ÑŒ ÐºÐ¾Ð´ Ð¾ÑˆÐ¸Ð±ÐºÐ¸
         return;
     }
 
     const uint8_t* pTempSrc = pSrc;
     const uint8_t* const pEndOfDest = pDest + uiDestSize;
-    const uint8_t* const pEndOfSrc = pSrc + dwRLEDecompressSourceSize; // Предполагается, что dwRLEDecompressSourceSize определено правильно
+    const uint8_t* const pEndOfSrc = pSrc + dwRLEDecompressSourceSize; // ÐŸÑ€ÐµÐ´Ð¿Ð¾Ð»Ð°Ð³Ð°ÐµÑ‚ÑÑ, Ñ‡Ñ‚Ð¾ dwRLEDecompressSourceSize Ð¾Ð¿Ñ€ÐµÐ´ÐµÐ»ÐµÐ½Ð¾ Ð¿Ñ€Ð°Ð²Ð¸Ð»ÑŒÐ½Ð¾
 
     try {
         while (pDest < pEndOfDest && pTempSrc < pEndOfSrc) {
             if (*pTempSrc == uiEscape) {
                 if (pTempSrc + 1 >= pEndOfSrc || pTempSrc[1] == 0 || pTempSrc + 2 + uiSegSize > pEndOfSrc) {
-                    // Обработка ошибки, неверное значение ucCurSeg или недостаточно данных в исходном буфере
+                    // ÐžÐ±Ñ€Ð°Ð±Ð¾Ñ‚ÐºÐ° Ð¾ÑˆÐ¸Ð±ÐºÐ¸, Ð½ÐµÐ²ÐµÑ€Ð½Ð¾Ðµ Ð·Ð½Ð°Ñ‡ÐµÐ½Ð¸Ðµ ucCurSeg Ð¸Ð»Ð¸ Ð½ÐµÐ´Ð¾ÑÑ‚Ð°Ñ‚Ð¾Ñ‡Ð½Ð¾ Ð´Ð°Ð½Ð½Ñ‹Ñ… Ð² Ð¸ÑÑ…Ð¾Ð´Ð½Ð¾Ð¼ Ð±ÑƒÑ„ÐµÑ€Ðµ
                     throw std::runtime_error("rled error 1");
                 }
 
                 uint8_t ucCurSeg = pTempSrc[1];
                 while (ucCurSeg--) {
                     if (pDest + uiSegSize > pEndOfDest) {
-                        // Обработка ошибки, недостаточно места в целевом буфере
+                        // ÐžÐ±Ñ€Ð°Ð±Ð¾Ñ‚ÐºÐ° Ð¾ÑˆÐ¸Ð±ÐºÐ¸, Ð½ÐµÐ´Ð¾ÑÑ‚Ð°Ñ‚Ð¾Ñ‡Ð½Ð¾ Ð¼ÐµÑÑ‚Ð° Ð² Ñ†ÐµÐ»ÐµÐ²Ð¾Ð¼ Ð±ÑƒÑ„ÐµÑ€Ðµ
                         throw std::runtime_error("rled error 2");
                     }
                     memcpy(pDest, pTempSrc + 2, uiSegSize);
@@ -1765,7 +1773,7 @@ void RLEDecompress_hook(uint8_t* pDest, size_t uiDestSize, const uint8_t* pSrc, 
                 pTempSrc += 2 + uiSegSize;
             } else {
                 if (pDest + uiSegSize > pEndOfDest || pTempSrc + uiSegSize > pEndOfSrc) {
-                    // Обработка ошибки, недостаточно данных в исходном буфере или недостаточно места в целевом буфере
+                    // ÐžÐ±Ñ€Ð°Ð±Ð¾Ñ‚ÐºÐ° Ð¾ÑˆÐ¸Ð±ÐºÐ¸, Ð½ÐµÐ´Ð¾ÑÑ‚Ð°Ñ‚Ð¾Ñ‡Ð½Ð¾ Ð´Ð°Ð½Ð½Ñ‹Ñ… Ð² Ð¸ÑÑ…Ð¾Ð´Ð½Ð¾Ð¼ Ð±ÑƒÑ„ÐµÑ€Ðµ Ð¸Ð»Ð¸ Ð½ÐµÐ´Ð¾ÑÑ‚Ð°Ñ‚Ð¾Ñ‡Ð½Ð¾ Ð¼ÐµÑÑ‚Ð° Ð² Ñ†ÐµÐ»ÐµÐ²Ð¾Ð¼ Ð±ÑƒÑ„ÐµÑ€Ðµ
                     throw std::runtime_error("rled error 3");
                 }
                 memcpy(pDest, pTempSrc, uiSegSize);
