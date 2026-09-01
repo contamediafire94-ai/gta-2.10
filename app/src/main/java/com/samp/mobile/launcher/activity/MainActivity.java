@@ -28,6 +28,7 @@ public class MainActivity extends AppCompatActivity {
     private static final int REQUEST_DATA_FOLDER = 9002;
     private static final int REQUEST_AUDIO_FOLDER = 9003;
     private static final int REQUEST_STREAM_FILE = 9004;
+    private static final int REQUEST_SAMP_FOLDER = 9005;
 
     private EditText editNick;
     private SharedPreferences prefs;
@@ -94,6 +95,18 @@ public class MainActivity extends AppCompatActivity {
                     this::openStreamFilePicker,
                     700
             );
+
+        } else if (!prefs.getBoolean("samp_imported", false)) {
+            Toast.makeText(
+                    this,
+                    "Selecione a pasta Download/BetaTesterData/SAMP",
+                    Toast.LENGTH_LONG
+            ).show();
+
+            findViewById(android.R.id.content).postDelayed(
+                    this::openSampFolderPicker,
+                    700
+            );
         }
 
         jogar.setOnClickListener(v -> {
@@ -142,6 +155,16 @@ public class MainActivity extends AppCompatActivity {
                         Toast.LENGTH_LONG
                 ).show();
                 openStreamFilePicker();
+                return;
+            }
+
+            if (!prefs.getBoolean("samp_imported", false)) {
+                Toast.makeText(
+                        MainActivity.this,
+                        "Importe a pasta SAMP primeiro.",
+                        Toast.LENGTH_LONG
+                ).show();
+                openSampFolderPicker();
                 return;
             }
 
@@ -197,6 +220,17 @@ public class MainActivity extends AppCompatActivity {
         startActivityForResult(intent, REQUEST_STREAM_FILE);
     }
 
+    private void openSampFolderPicker() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+        intent.addFlags(
+                Intent.FLAG_GRANT_READ_URI_PERMISSION
+                        | Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                        | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
+                        | Intent.FLAG_GRANT_PREFIX_URI_PERMISSION
+        );
+        startActivityForResult(intent, REQUEST_SAMP_FOLDER);
+    }
+
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
@@ -222,7 +256,8 @@ public class MainActivity extends AppCompatActivity {
 
         if ((requestCode != REQUEST_TEXDB_FOLDER
                 && requestCode != REQUEST_DATA_FOLDER
-                && requestCode != REQUEST_AUDIO_FOLDER)
+                && requestCode != REQUEST_AUDIO_FOLDER
+                && requestCode != REQUEST_SAMP_FOLDER)
                 || resultCode != RESULT_OK
                 || data == null
                 || data.getData() == null) {
@@ -242,21 +277,25 @@ public class MainActivity extends AppCompatActivity {
         final boolean importingTexdb = requestCode == REQUEST_TEXDB_FOLDER;
         final boolean importingData = requestCode == REQUEST_DATA_FOLDER;
         final boolean importingAudio = requestCode == REQUEST_AUDIO_FOLDER;
+        final boolean importingSamp = requestCode == REQUEST_SAMP_FOLDER;
 
         final String destinationFolder =
                 importingTexdb ? "texdb_app" :
                 importingData ? "data_app" :
-                "audio_app";
+                importingAudio ? "audio_app" :
+                "SAMP_app";
 
         final String prefKey =
                 importingTexdb ? "texdb_imported" :
                 importingData ? "data_imported" :
-                "audio_imported";
+                importingAudio ? "audio_imported" :
+                "samp_imported";
 
         final String title =
                 importingTexdb ? "Importando texdb" :
                 importingData ? "Importando data" :
-                "Importando audio";
+                importingAudio ? "Importando audio" :
+                "Importando SAMP";
 
         importDialog = new ProgressDialog(this);
         importDialog.setTitle(title);
@@ -322,6 +361,13 @@ public class MainActivity extends AppCompatActivity {
                         ).show();
 
                         openStreamFilePicker();
+
+                    } else if (importingSamp) {
+                        Toast.makeText(
+                                MainActivity.this,
+                                "SAMP importado com sucesso. Agora pode tocar em JOGAR.",
+                                Toast.LENGTH_LONG
+                        ).show();
                     }
                 });
 
@@ -373,9 +419,11 @@ public class MainActivity extends AppCompatActivity {
 
                     Toast.makeText(
                             MainActivity.this,
-                            "stream.ini importado com sucesso. Agora pode tocar em JOGAR.",
+                            "stream.ini importado. Agora selecione Download/BetaTesterData/SAMP.",
                             Toast.LENGTH_LONG
                     ).show();
+
+                    openSampFolderPicker();
                 });
 
             } catch (Exception e) {
@@ -485,4 +533,3 @@ public class MainActivity extends AppCompatActivity {
             output.flush();
         }
     }
-        }
