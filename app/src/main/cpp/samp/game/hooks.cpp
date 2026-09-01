@@ -1522,9 +1522,13 @@ if(!strncmp(r1+12, "mainV1.scm", 10))
         FLog("Loading weapon.dat..");
     }
 
-    // CINFO.BIN e um cache de colisao que o GTA precisa escrever.
-    // O CINFO.BIN antigo esta com Permission denied, entao usamos um
-    // arquivo novo criado pelo proprio app e abrimos com leitura+escrita.
+    // CINFO.BIN e o cache de colisao.
+    // IMPORTANTE: se marcarmos um arquivo vazio como "existente", o GTA
+    // tenta ler um cache invalido e pode crashar durante LoadScene.
+    //
+    // Para este teste, sempre criamos/truncamos CINFO_APP.BIN, mas
+    // informamos ao GTA que o cache AINDA NAO EXISTE. Assim ele reconstrói
+    // o cache usando um FILE* valido e depois consegue escrever nele.
     if (!strcmp(r1, "CINFO.BIN"))
     {
 #if VER_x32
@@ -1532,25 +1536,22 @@ if(!strncmp(r1+12, "mainV1.scm", 10))
 #else
         auto *st = (stFile*)malloc(0x10);
 #endif
-        st->isFileExist = false;
 
         sprintf(path, "%sCINFO_APP.BIN", g_pszStorage);
 
         errno = 0;
-        FILE *f = fopen(path, "r+b");
-        if (!f)
-            f = fopen(path, "w+b");
+        FILE *f = fopen(path, "w+b");
 
         if (f)
         {
-            st->isFileExist = true;
+            st->isFileExist = false;
             st->f = f;
-            FLog("CINFO writable OK | %s", path);
+            FLog("CINFO rebuild mode OK | %s", path);
             return st;
         }
 
         int openErr = errno;
-        FLog("CINFO writable FAIL | path=%s | errno=%d | %s",
+        FLog("CINFO rebuild mode FAIL | path=%s | errno=%d | %s",
              path, openErr, strerror(openErr));
         free(st);
         return nullptr;
