@@ -855,7 +855,14 @@ void CGame::Process() {
                 if (sampConnectedWarmupFrames >= 180)
                 {
                     stopSinglePlayerScripts = true;
-                    FLog("SA-MP connected; GTA story scripts stopped after short warm-up");
+
+                    // A campanha ja pode ter colocado o texto de introducao
+                    // ("Francis INTL. Airport / Liberty City / 1992") na tela.
+                    // Limpa somente os textos grandes do GTA ao entregar o controle
+                    // ao SA-MP, sem mexer nos TextDraws do servidor.
+                    ScriptCommand(&text_clear_all);
+
+                    FLog("SA-MP connected; GTA story scripts stopped and story text cleared");
                 }
             }
         }
