@@ -1522,6 +1522,14 @@ if(!strncmp(r1+12, "mainV1.scm", 10))
         FLog("Loading weapon.dat..");
     }
 
+    // Arquivos de animacao importados pelo proprio launcher.
+    // Ex.: ANIM/PED.IFP -> anim_app/PED.IFP
+    if (!strncmp(r1, "ANIM/", 5) || !strncmp(r1, "anim/", 5))
+    {
+        sprintf(path, "%sanim_app/%s", g_pszStorage, r1 + 5);
+        FLog("Redirecting ANIM -> %s", path);
+    }
+
     // CINFO.BIN valido importado pelo launcher para CINFO_APP.BIN.
     // Abre em leitura+escrita porque o CColAccel le o cache durante
     // startCache e pode atualiza-lo em endCache.
