@@ -248,8 +248,10 @@ void DoInitStuff() {
         pAudioStream = new CAudioStream();
         pAudioStream->Initialize();
 
-        pUI->splashscreen()->setVisible(false);
-        pUI->chat()->setVisible(true);
+        // Mantem a tela do cliente por cima enquanto o GTA termina de inicializar.
+        // Assim o frontend/menu normal do GTA nao fica aparecendo no fundo.
+        pUI->splashscreen()->setVisible(true);
+        pUI->chat()->setVisible(false);
         //pUI->buttonpanel()->setVisible(true);
 
         pGame->Initialize();
@@ -322,9 +324,13 @@ void DoInitStuff() {
         }
 
         bNetworkInited = true;
+
+        // A conexao SA-MP ja foi criada: agora removemos a cobertura de carregamento.
+        pUI->splashscreen()->setVisible(false);
+        pUI->chat()->setVisible(true);
         pUI->chat()->addDebugMessage("Connected to server... {622cf5}ID: %d", serverid);
 
-
+        FLog("Direct SA-MP flow: frontend covered until CNetGame");
         FLog("DoInitStuff end");
     }
 }
