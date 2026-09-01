@@ -46,6 +46,15 @@ public class MainActivity extends AppCompatActivity {
 
         prefs = getSharedPreferences("beta_tester_config", MODE_PRIVATE);
 
+        // Forca uma unica nova importacao da pasta SAMP nesta build.
+        // Isso preserva texdb/data/audio/models e corrige /files/SAMP.
+        if (!prefs.getBoolean("samp_storage_fix_v1", false)) {
+            prefs.edit()
+                    .putBoolean("samp_imported", false)
+                    .putBoolean("samp_storage_fix_v1", true)
+                    .apply();
+        }
+
         String nickSalvo = prefs.getString("nickname", "");
         editNick.setText(nickSalvo);
 
