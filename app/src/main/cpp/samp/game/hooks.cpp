@@ -45,6 +45,28 @@ CPedGTA* dwCurPlayerActor = 0;
 uint8_t byteCurPlayer = 0;
 uint8_t byteCurDriver = 0;
 
+// v16: depois que o SA-MP conecta, bloqueamos somente a execucao
+// dos threads da campanha. CTheScripts::Process continua rodando
+// para limpar os textos/retangulos de script a cada frame.
+bool g_BlockGtaStoryScripts = false;
+
+void (*CRunningScript__Process)(void* thiz);
+void CRunningScript__Process_hook(void* thiz)
+{
+    if (g_BlockGtaStoryScripts)
+    {
+        static bool logged = false;
+        if (!logged)
+        {
+            FLog("GTA story script threads blocked; keeping CTheScripts frame cleanup active");
+            logged = true;
+        }
+        return;
+    }
+
+    CRunningScript__Process(thiz);
+}
+
 extern "C" uintptr_t get_lib()
 {
     return g_libGTASA;
@@ -2064,6 +2086,7 @@ void InstallSpecialHooks()
 
 void InstallHooks()
 {
+    CHook::InlineHook("_ZN14CRunningScript7ProcessEv", &CRunningScript__Process_hook, &CRunningScript__Process);
     CHook::Redirect("_Z13Render2dStuffv", &Render2dStuff);
     CHook::Redirect("_Z13RenderEffectsv", &RenderEffects);
     CHook::InlineHook("_Z14AND_TouchEventiiii", &AND_TouchEvent_hook, &AND_TouchEvent);

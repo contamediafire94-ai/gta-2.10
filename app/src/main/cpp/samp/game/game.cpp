@@ -15,6 +15,7 @@
 #include "game/Collision/Collision.h"
 #include "World.h"
 
+extern bool g_BlockGtaStoryScripts;
 void ApplySAMPPatchesInGame();
 void InitScripting();
 
@@ -836,34 +837,27 @@ void CGame::Process() {
         // CClock::Update()
 
         ((void (*)()) (g_libGTASA + (VER_x32 ? 0x005CC2E8 + 1 : 0x6F0BD8)))(); // CWeather::Update()
-        // Let GTA finish the initial new-game transition, then hand control to SA-MP.
-        // Do not stop the scripts merely because CNetGame was allocated; wait until
-        // the server is actually connected and give the GTA fade/camera a few frames.
+        // v16:
+        // CTheScripts::Process precisa continuar sendo chamado a cada frame porque
+        // ele limpa os buffers de texto/retangulos criados pelo SCM no frame anterior.
+        // Depois que o SA-MP conecta, o hook de CRunningScript::Process impede que
+        // a campanha avance, mas mantemos a limpeza normal do motor.
         static int sampConnectedWarmupFrames = 0;
-        static bool stopSinglePlayerScripts = false;
 
-        if (!stopSinglePlayerScripts)
+        ((void(*)())(g_libGTASA + (VER_x32 ? 0x0032AED8 + 1 : 0x3F3AD8)))(); // CTheScripts::Process()
+
+        if (!g_BlockGtaStoryScripts &&
+            pNetGame &&
+            pNetGame->GetGameState() == GAMESTATE_CONNECTED)
         {
-            ((void(*)())(g_libGTASA + (VER_x32 ? 0x0032AED8 + 1 : 0x3F3AD8)))(); // CTheScripts::Process()
+            ++sampConnectedWarmupFrames;
 
-            if (pNetGame && pNetGame->GetGameState() == GAMESTATE_CONNECTED)
+            if (sampConnectedWarmupFrames >= 180)
             {
-                ++sampConnectedWarmupFrames;
-                // O SA-MP ja esta conectado. Mantemos apenas alguns frames
-                // para o GTA concluir a transicao/fade e depois paramos os
-                // scripts da campanha para ela nao cobrir o multiplayer.
-                if (sampConnectedWarmupFrames >= 180)
-                {
-                    stopSinglePlayerScripts = true;
+                g_BlockGtaStoryScripts = true;
+                ScriptCommand(&text_clear_all);
 
-                    // A campanha ja pode ter colocado o texto de introducao
-                    // ("Francis INTL. Airport / Liberty City / 1992") na tela.
-                    // Limpa somente os textos grandes do GTA ao entregar o controle
-                    // ao SA-MP, sem mexer nos TextDraws do servidor.
-                    ScriptCommand(&text_clear_all);
-
-                    FLog("SA-MP connected; GTA story scripts stopped and story text cleared");
-                }
+                FLog("SA-MP connected; story threads blocked, script frame cleanup remains active");
             }
         }
         // CCollision::Update()
