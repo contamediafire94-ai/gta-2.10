@@ -1522,6 +1522,18 @@ if(!strncmp(r1+12, "mainV1.scm", 10))
         FLog("Loading weapon.dat..");
     }
 
+    // SAMP IDE - o GTA pede "SAMP/samp.IDE", mas o arquivo do pacote
+    // está em SAMP_app/SAMP.ide. Redirecionamos explicitamente para
+    // evitar o Permission denied da pasta SAMP antiga.
+    if (!strcmp(r1, "SAMP/samp.IDE") ||
+        !strcmp(r1, "SAMP/SAMP.IDE") ||
+        !strcmp(r1, "SAMP/samp.ide") ||
+        !strcmp(r1, "SAMP/SAMP.ide"))
+    {
+        sprintf(path, "%sSAMP_app/SAMP.ide", g_pszStorage);
+        FLog("Redirecting SAMP.IDE -> %s", path);
+    }
+
 #if VER_x32
     auto *st = (stFile*)malloc(8);
 #else
