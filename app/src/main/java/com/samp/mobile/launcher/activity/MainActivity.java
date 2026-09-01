@@ -30,6 +30,7 @@ public class MainActivity extends AppCompatActivity {
     private static final int REQUEST_STREAM_FILE = 9004;
     private static final int REQUEST_SAMP_FOLDER = 9005;
     private static final int REQUEST_MODELS_FOLDER = 9006;
+    private static final int REQUEST_TEXDB_GAME_FOLDER = 9007;
 
     private EditText editNick;
     private SharedPreferences prefs;
@@ -69,6 +70,17 @@ public class MainActivity extends AppCompatActivity {
 
             findViewById(android.R.id.content).postDelayed(
                     this::openTexdbFolderPicker,
+                    700
+            );
+        } else if (needsTexdbGameFiles()) {
+            Toast.makeText(
+                    this,
+                    "Selecione novamente Download/BetaTesterData/texdb para corrigir GTA3.IMG",
+                    Toast.LENGTH_LONG
+            ).show();
+
+            findViewById(android.R.id.content).postDelayed(
+                    this::openTexdbGameFolderPicker,
                     700
             );
         } else if (!prefs.getBoolean("data_imported", false)) {
@@ -149,6 +161,16 @@ else if (!prefs.getBoolean("models_imported", false)) {
                 return;
             }
 
+            if (needsTexdbGameFiles()) {
+                Toast.makeText(
+                        MainActivity.this,
+                        "Falta TEXDB/GTA3.IMG. Selecione a pasta texdb novamente.",
+                        Toast.LENGTH_LONG
+                ).show();
+                openTexdbGameFolderPicker();
+                return;
+            }
+
             if (!prefs.getBoolean("data_imported", false)) {
                 Toast.makeText(
                         MainActivity.this,
@@ -214,6 +236,25 @@ if (!prefs.getBoolean("models_imported", false)) {
                         | Intent.FLAG_GRANT_PREFIX_URI_PERMISSION
         );
         startActivityForResult(intent, REQUEST_TEXDB_FOLDER);
+    }
+
+    private void openTexdbGameFolderPicker() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+        intent.addFlags(
+                Intent.FLAG_GRANT_READ_URI_PERMISSION
+                        | Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                        | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
+                        | Intent.FLAG_GRANT_PREFIX_URI_PERMISSION
+        );
+        startActivityForResult(intent, REQUEST_TEXDB_GAME_FOLDER);
+    }
+
+    private boolean needsTexdbGameFiles() {
+        File root = getExternalFilesDir(null);
+        if (root == null) return true;
+
+        File gta3Img = new File(root, "TEXDB/GTA3.IMG");
+        return !gta3Img.isFile() || gta3Img.length() <= 0;
     }
 
     private void openDataFolderPicker() {
@@ -301,7 +342,8 @@ private void openModelsFolderPicker() {
         && requestCode != REQUEST_DATA_FOLDER
         && requestCode != REQUEST_AUDIO_FOLDER
         && requestCode != REQUEST_SAMP_FOLDER
-        && requestCode != REQUEST_MODELS_FOLDER)
+        && requestCode != REQUEST_MODELS_FOLDER
+        && requestCode != REQUEST_TEXDB_GAME_FOLDER)
                 || resultCode != RESULT_OK
                 || data == null
                 || data.getData() == null) {
@@ -323,8 +365,10 @@ private void openModelsFolderPicker() {
         final boolean importingAudio = requestCode == REQUEST_AUDIO_FOLDER;
         final boolean importingSamp = requestCode == REQUEST_SAMP_FOLDER;
         final boolean importingModels = requestCode == REQUEST_MODELS_FOLDER;
+        final boolean importingTexdbGame = requestCode == REQUEST_TEXDB_GAME_FOLDER;
 
         final String destinationFolder =
+        importingTexdbGame ? "TEXDB" :
         importingTexdb ? "texdb_app" :
         importingData ? "data_app" :
         importingAudio ? "audio_app" :
@@ -332,6 +376,7 @@ private void openModelsFolderPicker() {
         "SAMP_app";
 
         final String prefKey =
+        importingTexdbGame ? "texdb_game_imported" :
         importingTexdb ? "texdb_imported" :
         importingData ? "data_imported" :
         importingAudio ? "audio_imported" :
@@ -339,6 +384,7 @@ private void openModelsFolderPicker() {
         "samp_imported";
         
         final String title =
+        importingTexdbGame ? "Corrigindo TEXDB" :
         importingTexdb ? "Importando texdb" :
         importingData ? "Importando data" :
         importingAudio ? "Importando audio" :
@@ -376,6 +422,15 @@ private void openModelsFolderPicker() {
 
                 copyDirectoryContents(treeUri, rootDocumentUri, destination);
 
+                if (importingTexdbGame) {
+                    File gta3Img = new File(root, "TEXDB/GTA3.IMG");
+                    if (!gta3Img.isFile() || gta3Img.length() <= 0) {
+                        throw new IOException(
+                                "GTA3.IMG nao foi encontrado dentro da pasta texdb selecionada."
+                        );
+                    }
+                }
+
                 // O cliente usa alguns arquivos diretamente em /files/SAMP.
                 // Quando a pasta SAMP for importada, mantemos também uma cópia
                 // compatível em /files/SAMP, além de /files/SAMP_app.
@@ -398,7 +453,14 @@ private void openModelsFolderPicker() {
                         importDialog.dismiss();
                     }
 
-                    if (importingTexdb) {
+                    if (importingTexdbGame) {
+                        Toast.makeText(
+                                MainActivity.this,
+                                "TEXDB/GTA3.IMG corrigido. Agora pode tocar em JOGAR.",
+                                Toast.LENGTH_LONG
+                        ).show();
+
+                    } else if (importingTexdb) {
                         Toast.makeText(
                                 MainActivity.this,
                                 "texdb importado. Agora selecione Download/BetaTesterData/data.",
