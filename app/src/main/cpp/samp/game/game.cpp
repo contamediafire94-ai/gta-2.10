@@ -857,7 +857,13 @@ void CGame::Process() {
                 g_BlockGtaStoryScripts = true;
                 ScriptCommand(&text_clear_all);
 
-                FLog("SA-MP connected; story threads blocked, script frame cleanup remains active");
+                // v17: a campanha pode deixar a camera presa no estado da intro.
+                // Restauramos a camera normal e colocamos ela atras do player,
+                // sem mexer na conexao, TextDraws ou nos scripts do servidor.
+                TheCamera.Restore();
+                CCamera::SetBehindPlayer();
+
+                FLog("SA-MP connected; story threads blocked, camera restored behind player");
             }
         }
         // CCollision::Update()
