@@ -27,6 +27,7 @@ public class MainActivity extends AppCompatActivity {
     private static final int REQUEST_TEXDB_FOLDER = 9001;
     private static final int REQUEST_DATA_FOLDER = 9002;
     private static final int REQUEST_AUDIO_FOLDER = 9003;
+    private static final int REQUEST_STREAM_FILE = 9004;
 
     private EditText editNick;
     private SharedPreferences prefs;
@@ -81,6 +82,18 @@ public class MainActivity extends AppCompatActivity {
                     this::openAudioFolderPicker,
                     700
             );
+
+        } else if (!prefs.getBoolean("stream_imported", false)) {
+            Toast.makeText(
+                    this,
+                    "Selecione o arquivo Download/BetaTesterData/stream.ini",
+                    Toast.LENGTH_LONG
+            ).show();
+
+            findViewById(android.R.id.content).postDelayed(
+                    this::openStreamFilePicker,
+                    700
+            );
         }
 
         jogar.setOnClickListener(v -> {
@@ -119,6 +132,16 @@ public class MainActivity extends AppCompatActivity {
                         Toast.LENGTH_LONG
                 ).show();
                 openAudioFolderPicker();
+                return;
+            }
+
+            if (!prefs.getBoolean("stream_imported", false)) {
+                Toast.makeText(
+                        MainActivity.this,
+                        "Importe o arquivo stream.ini primeiro.",
+                        Toast.LENGTH_LONG
+                ).show();
+                openStreamFilePicker();
                 return;
             }
 
@@ -163,9 +186,39 @@ public class MainActivity extends AppCompatActivity {
         startActivityForResult(intent, REQUEST_AUDIO_FOLDER);
     }
 
+    private void openStreamFilePicker() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("*/*");
+        intent.addFlags(
+                Intent.FLAG_GRANT_READ_URI_PERMISSION
+                        | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
+        );
+        startActivityForResult(intent, REQUEST_STREAM_FILE);
+    }
+
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+
+        if (requestCode == REQUEST_STREAM_FILE) {
+            if (resultCode != RESULT_OK || data == null || data.getData() == null) {
+                return;
+            }
+
+            Uri streamUri = data.getData();
+
+            try {
+                getContentResolver().takePersistableUriPermission(
+                        streamUri,
+                        Intent.FLAG_GRANT_READ_URI_PERMISSION
+                );
+            } catch (SecurityException ignored) {
+            }
+
+            importStreamIni(streamUri);
+            return;
+        }
 
         if ((requestCode != REQUEST_TEXDB_FOLDER
                 && requestCode != REQUEST_DATA_FOLDER
@@ -264,9 +317,11 @@ public class MainActivity extends AppCompatActivity {
                     } else if (importingAudio) {
                         Toast.makeText(
                                 MainActivity.this,
-                                "audio importado com sucesso. Agora pode tocar em JOGAR.",
+                                "audio importado. Agora selecione Download/BetaTesterData/stream.ini.",
                                 Toast.LENGTH_LONG
                         ).show();
+
+                        openStreamFilePicker();
                     }
                 });
 
@@ -279,6 +334,59 @@ public class MainActivity extends AppCompatActivity {
                     Toast.makeText(
                             MainActivity.this,
                             "Erro ao importar: " + e.getMessage(),
+                            Toast.LENGTH_LONG
+                    ).show();
+                });
+            }
+        }).start();
+    }
+
+    private void importStreamIni(Uri sourceUri) {
+        importDialog = new ProgressDialog(this);
+        importDialog.setTitle("Importando stream.ini");
+        importDialog.setMessage("Copiando arquivo...");
+        importDialog.setIndeterminate(true);
+        importDialog.setCancelable(false);
+        importDialog.show();
+
+        new Thread(() -> {
+            try {
+                File root = getExternalFilesDir(null);
+
+                if (root == null) {
+                    throw new IOException("Pasta privada externa indisponivel.");
+                }
+
+                File destination = new File(root, "stream_app.ini");
+                copyFile(getContentResolver(), sourceUri, destination);
+
+                if (!destination.isFile() || destination.length() <= 0) {
+                    throw new IOException("stream_app.ini nao foi criado corretamente.");
+                }
+
+                prefs.edit().putBoolean("stream_imported", true).apply();
+
+                runOnUiThread(() -> {
+                    if (importDialog != null && importDialog.isShowing()) {
+                        importDialog.dismiss();
+                    }
+
+                    Toast.makeText(
+                            MainActivity.this,
+                            "stream.ini importado com sucesso. Agora pode tocar em JOGAR.",
+                            Toast.LENGTH_LONG
+                    ).show();
+                });
+
+            } catch (Exception e) {
+                runOnUiThread(() -> {
+                    if (importDialog != null && importDialog.isShowing()) {
+                        importDialog.dismiss();
+                    }
+
+                    Toast.makeText(
+                            MainActivity.this,
+                            "Erro ao importar stream.ini: " + e.getMessage(),
                             Toast.LENGTH_LONG
                     ).show();
                 });
@@ -377,4 +485,4 @@ public class MainActivity extends AppCompatActivity {
             output.flush();
         }
     }
-}
+        }
