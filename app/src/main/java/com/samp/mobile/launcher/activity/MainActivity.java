@@ -367,6 +367,21 @@ private void openModelsFolderPicker() {
 
                 copyDirectoryContents(treeUri, rootDocumentUri, destination);
 
+                // O cliente usa alguns arquivos diretamente em /files/SAMP.
+                // Quando a pasta SAMP for importada, mantemos também uma cópia
+                // compatível em /files/SAMP, além de /files/SAMP_app.
+                if (importingSamp) {
+                    File sampDestination = new File(root, "SAMP");
+
+                    if (!sampDestination.exists() && !sampDestination.mkdirs()) {
+                        throw new IOException(
+                                "Nao foi possivel criar: " + sampDestination.getAbsolutePath()
+                        );
+                    }
+
+                    copyDirectoryContents(treeUri, rootDocumentUri, sampDestination);
+                }
+
                 prefs.edit().putBoolean(prefKey, true).apply();
 
                 runOnUiThread(() -> {
