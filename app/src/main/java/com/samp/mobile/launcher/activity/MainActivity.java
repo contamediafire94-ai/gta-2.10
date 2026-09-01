@@ -30,6 +30,7 @@ public class MainActivity extends AppCompatActivity {
     private static final int REQUEST_STREAM_FILE = 9004;
     private static final int REQUEST_SAMP_FOLDER = 9005;
     private static final int REQUEST_CINFO_FILE = 9006;
+    private static final int REQUEST_ANIM_FOLDER = 9007;
 
     private EditText editNick;
     private SharedPreferences prefs;
@@ -120,6 +121,18 @@ public class MainActivity extends AppCompatActivity {
                     this::openCinfoFilePicker,
                     700
             );
+
+        } else if (!prefs.getBoolean("anim_imported", false)) {
+            Toast.makeText(
+                    this,
+                    "Selecione a pasta Download/BetaTesterData/anim",
+                    Toast.LENGTH_LONG
+            ).show();
+
+            findViewById(android.R.id.content).postDelayed(
+                    this::openAnimFolderPicker,
+                    700
+            );
         }
 
         jogar.setOnClickListener(v -> {
@@ -188,6 +201,16 @@ public class MainActivity extends AppCompatActivity {
                         Toast.LENGTH_LONG
                 ).show();
                 openCinfoFilePicker();
+                return;
+            }
+
+            if (!prefs.getBoolean("anim_imported", false)) {
+                Toast.makeText(
+                        MainActivity.this,
+                        "Importe a pasta anim primeiro.",
+                        Toast.LENGTH_LONG
+                ).show();
+                openAnimFolderPicker();
                 return;
             }
 
@@ -265,6 +288,17 @@ public class MainActivity extends AppCompatActivity {
         startActivityForResult(intent, REQUEST_CINFO_FILE);
     }
 
+    private void openAnimFolderPicker() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+        intent.addFlags(
+                Intent.FLAG_GRANT_READ_URI_PERMISSION
+                        | Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                        | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
+                        | Intent.FLAG_GRANT_PREFIX_URI_PERMISSION
+        );
+        startActivityForResult(intent, REQUEST_ANIM_FOLDER);
+    }
+
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
@@ -295,7 +329,8 @@ public class MainActivity extends AppCompatActivity {
         if ((requestCode != REQUEST_TEXDB_FOLDER
                 && requestCode != REQUEST_DATA_FOLDER
                 && requestCode != REQUEST_AUDIO_FOLDER
-                && requestCode != REQUEST_SAMP_FOLDER)
+                && requestCode != REQUEST_SAMP_FOLDER
+                && requestCode != REQUEST_ANIM_FOLDER)
                 || resultCode != RESULT_OK
                 || data == null
                 || data.getData() == null) {
@@ -316,24 +351,28 @@ public class MainActivity extends AppCompatActivity {
         final boolean importingData = requestCode == REQUEST_DATA_FOLDER;
         final boolean importingAudio = requestCode == REQUEST_AUDIO_FOLDER;
         final boolean importingSamp = requestCode == REQUEST_SAMP_FOLDER;
+        final boolean importingAnim = requestCode == REQUEST_ANIM_FOLDER;
 
         final String destinationFolder =
                 importingTexdb ? "texdb_app" :
                 importingData ? "data_app" :
                 importingAudio ? "audio_app" :
-                "SAMP_app";
+                importingSamp ? "SAMP_app" :
+                "anim_app";
 
         final String prefKey =
                 importingTexdb ? "texdb_imported" :
                 importingData ? "data_imported" :
                 importingAudio ? "audio_imported" :
-                "samp_imported";
+                importingSamp ? "samp_imported" :
+                "anim_imported";
 
         final String title =
                 importingTexdb ? "Importando texdb" :
                 importingData ? "Importando data" :
                 importingAudio ? "Importando audio" :
-                "Importando SAMP";
+                importingSamp ? "Importando SAMP" :
+                "Importando anim";
 
         importDialog = new ProgressDialog(this);
         importDialog.setTitle(title);
@@ -408,6 +447,13 @@ public class MainActivity extends AppCompatActivity {
                         ).show();
 
                         openCinfoFilePicker();
+
+                    } else if (importingAnim) {
+                        Toast.makeText(
+                                MainActivity.this,
+                                "anim importado com sucesso. Agora pode tocar em JOGAR.",
+                                Toast.LENGTH_LONG
+                        ).show();
                     }
                 });
 
@@ -514,9 +560,11 @@ public class MainActivity extends AppCompatActivity {
 
                     Toast.makeText(
                             MainActivity.this,
-                            "CINFO.BIN importado com sucesso. Agora pode tocar em JOGAR.",
+                            "CINFO.BIN importado. Agora selecione Download/BetaTesterData/anim.",
                             Toast.LENGTH_LONG
                     ).show();
+
+                    openAnimFolderPicker();
                 });
 
             } catch (Exception e) {
