@@ -29,8 +29,7 @@ public class MainActivity extends AppCompatActivity {
     private static final int REQUEST_AUDIO_FOLDER = 9003;
     private static final int REQUEST_STREAM_FILE = 9004;
     private static final int REQUEST_SAMP_FOLDER = 9005;
-    private static final int REQUEST_MODELS_FOLDER = 9006;
-    private static final int REQUEST_TEXDB_GAME_FOLDER = 9007;
+    private static final int REQUEST_CINFO_FILE = 9006;
 
     private EditText editNick;
     private SharedPreferences prefs;
@@ -47,20 +46,11 @@ public class MainActivity extends AppCompatActivity {
 
         prefs = getSharedPreferences("beta_tester_config", MODE_PRIVATE);
 
-        // Forca uma unica nova importacao da pasta SAMP nesta build.
-        // Isso preserva texdb/data/audio/models e corrige /files/SAMP.
-        if (!prefs.getBoolean("samp_storage_fix_v1", false)) {
-            prefs.edit()
-                    .putBoolean("samp_imported", false)
-                    .putBoolean("samp_storage_fix_v1", true)
-                    .apply();
-        }
-
         String nickSalvo = prefs.getString("nickname", "");
         editNick.setText(nickSalvo);
 
-        // MantÃ©m compatibilidade com quem jÃ¡ importou o texdb na build anterior.
-        // Se texdb jÃ¡ estiver pronto, pede apenas a pasta data.
+        // Mantém compatibilidade com quem já importou o texdb na build anterior.
+        // Se texdb já estiver pronto, pede apenas a pasta data.
         if (!prefs.getBoolean("texdb_imported", false)) {
             Toast.makeText(
                     this,
@@ -70,17 +60,6 @@ public class MainActivity extends AppCompatActivity {
 
             findViewById(android.R.id.content).postDelayed(
                     this::openTexdbFolderPicker,
-                    700
-            );
-        } else if (needsTexdbGameFiles()) {
-            Toast.makeText(
-                    this,
-                    "Selecione novamente Download/BetaTesterData/texdb para corrigir GTA3.IMG",
-                    Toast.LENGTH_LONG
-            ).show();
-
-            findViewById(android.R.id.content).postDelayed(
-                    this::openTexdbGameFolderPicker,
                     700
             );
         } else if (!prefs.getBoolean("data_imported", false)) {
@@ -129,19 +108,20 @@ public class MainActivity extends AppCompatActivity {
                     this::openSampFolderPicker,
                     700
             );
-        }
-else if (!prefs.getBoolean("models_imported", false)) {
-    Toast.makeText(
-            this,
-            "Selecione a pasta Download/BetaTesterData/models",
-            Toast.LENGTH_LONG
-    ).show();
 
-    findViewById(android.R.id.content).postDelayed(
-            this::openModelsFolderPicker,
-            700
-    );
-}
+        } else if (!prefs.getBoolean("cinfo_imported", false)) {
+            Toast.makeText(
+                    this,
+                    "Selecione o arquivo Download/BetaTesterData/CINFO.BIN",
+                    Toast.LENGTH_LONG
+            ).show();
+
+            findViewById(android.R.id.content).postDelayed(
+                    this::openCinfoFilePicker,
+                    700
+            );
+        }
+
         jogar.setOnClickListener(v -> {
 
             String nick = editNick.getText().toString().trim();
@@ -158,16 +138,6 @@ else if (!prefs.getBoolean("models_imported", false)) {
                         Toast.LENGTH_LONG
                 ).show();
                 openTexdbFolderPicker();
-                return;
-            }
-
-            if (needsTexdbGameFiles()) {
-                Toast.makeText(
-                        MainActivity.this,
-                        "Falta TEXDB/GTA3.IMG. Selecione a pasta texdb novamente.",
-                        Toast.LENGTH_LONG
-                ).show();
-                openTexdbGameFolderPicker();
                 return;
             }
 
@@ -210,15 +180,17 @@ else if (!prefs.getBoolean("models_imported", false)) {
                 openSampFolderPicker();
                 return;
             }
-if (!prefs.getBoolean("models_imported", false)) {
-    Toast.makeText(
-            MainActivity.this,
-            "Importe a pasta models primeiro.",
-            Toast.LENGTH_LONG
-    ).show();
-    openModelsFolderPicker();
-    return;
-}
+
+            if (!prefs.getBoolean("cinfo_imported", false)) {
+                Toast.makeText(
+                        MainActivity.this,
+                        "Importe o arquivo CINFO.BIN primeiro.",
+                        Toast.LENGTH_LONG
+                ).show();
+                openCinfoFilePicker();
+                return;
+            }
+
             prefs.edit().putString("nickname", nick).apply();
 
             Intent intent = new Intent(MainActivity.this, SAMP.class);
@@ -236,25 +208,6 @@ if (!prefs.getBoolean("models_imported", false)) {
                         | Intent.FLAG_GRANT_PREFIX_URI_PERMISSION
         );
         startActivityForResult(intent, REQUEST_TEXDB_FOLDER);
-    }
-
-    private void openTexdbGameFolderPicker() {
-        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
-        intent.addFlags(
-                Intent.FLAG_GRANT_READ_URI_PERMISSION
-                        | Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-                        | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
-                        | Intent.FLAG_GRANT_PREFIX_URI_PERMISSION
-        );
-        startActivityForResult(intent, REQUEST_TEXDB_GAME_FOLDER);
-    }
-
-    private boolean needsTexdbGameFiles() {
-        File root = getExternalFilesDir(null);
-        if (root == null) return true;
-
-        File gta3Img = new File(root, "TEXDB/GTA3.IMG");
-        return !gta3Img.isFile() || gta3Img.length() <= 0;
     }
 
     private void openDataFolderPicker() {
@@ -289,61 +242,60 @@ if (!prefs.getBoolean("models_imported", false)) {
         );
         startActivityForResult(intent, REQUEST_STREAM_FILE);
     }
-    
+
     private void openSampFolderPicker() {
-    Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
-    intent.addFlags(
-            Intent.FLAG_GRANT_READ_URI_PERMISSION
-                    | Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-                    | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
-                    | Intent.FLAG_GRANT_PREFIX_URI_PERMISSION
-    );
-    startActivityForResult(intent, REQUEST_SAMP_FOLDER);
-}
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+        intent.addFlags(
+                Intent.FLAG_GRANT_READ_URI_PERMISSION
+                        | Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                        | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
+                        | Intent.FLAG_GRANT_PREFIX_URI_PERMISSION
+        );
+        startActivityForResult(intent, REQUEST_SAMP_FOLDER);
+    }
 
-private void openModelsFolderPicker() {
-    Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
-    intent.addFlags(
-            Intent.FLAG_GRANT_READ_URI_PERMISSION
-                    | Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-                    | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
-                    | Intent.FLAG_GRANT_PREFIX_URI_PERMISSION
-    );
-    startActivityForResult(intent, REQUEST_MODELS_FOLDER);
-}
+    private void openCinfoFilePicker() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("*/*");
+        intent.addFlags(
+                Intent.FLAG_GRANT_READ_URI_PERMISSION
+                        | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
+        );
+        startActivityForResult(intent, REQUEST_CINFO_FILE);
+    }
 
-@Override
-
-    
-                               
+    @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
 
-        if (requestCode == REQUEST_STREAM_FILE) {
+        if (requestCode == REQUEST_STREAM_FILE || requestCode == REQUEST_CINFO_FILE) {
             if (resultCode != RESULT_OK || data == null || data.getData() == null) {
                 return;
             }
 
-            Uri streamUri = data.getData();
+            Uri fileUri = data.getData();
 
             try {
                 getContentResolver().takePersistableUriPermission(
-                        streamUri,
+                        fileUri,
                         Intent.FLAG_GRANT_READ_URI_PERMISSION
                 );
             } catch (SecurityException ignored) {
             }
 
-            importStreamIni(streamUri);
+            if (requestCode == REQUEST_STREAM_FILE) {
+                importStreamIni(fileUri);
+            } else {
+                importCinfo(fileUri);
+            }
             return;
         }
 
         if ((requestCode != REQUEST_TEXDB_FOLDER
-        && requestCode != REQUEST_DATA_FOLDER
-        && requestCode != REQUEST_AUDIO_FOLDER
-        && requestCode != REQUEST_SAMP_FOLDER
-        && requestCode != REQUEST_MODELS_FOLDER
-        && requestCode != REQUEST_TEXDB_GAME_FOLDER)
+                && requestCode != REQUEST_DATA_FOLDER
+                && requestCode != REQUEST_AUDIO_FOLDER
+                && requestCode != REQUEST_SAMP_FOLDER)
                 || resultCode != RESULT_OK
                 || data == null
                 || data.getData() == null) {
@@ -364,32 +316,24 @@ private void openModelsFolderPicker() {
         final boolean importingData = requestCode == REQUEST_DATA_FOLDER;
         final boolean importingAudio = requestCode == REQUEST_AUDIO_FOLDER;
         final boolean importingSamp = requestCode == REQUEST_SAMP_FOLDER;
-        final boolean importingModels = requestCode == REQUEST_MODELS_FOLDER;
-        final boolean importingTexdbGame = requestCode == REQUEST_TEXDB_GAME_FOLDER;
 
         final String destinationFolder =
-        importingTexdbGame ? "TEXDB" :
-        importingTexdb ? "texdb_app" :
-        importingData ? "data_app" :
-        importingAudio ? "audio_app" :
-        importingModels ? "models" :
-        "SAMP_app";
+                importingTexdb ? "texdb_app" :
+                importingData ? "data_app" :
+                importingAudio ? "audio_app" :
+                "SAMP_app";
 
         final String prefKey =
-        importingTexdbGame ? "texdb_game_imported" :
-        importingTexdb ? "texdb_imported" :
-        importingData ? "data_imported" :
-        importingAudio ? "audio_imported" :
-        importingModels ? "models_imported" :
-        "samp_imported";
-        
+                importingTexdb ? "texdb_imported" :
+                importingData ? "data_imported" :
+                importingAudio ? "audio_imported" :
+                "samp_imported";
+
         final String title =
-        importingTexdbGame ? "Corrigindo TEXDB" :
-        importingTexdb ? "Importando texdb" :
-        importingData ? "Importando data" :
-        importingAudio ? "Importando audio" :
-        importingModels ? "Importando models" :
-        "Importando SAMP";
+                importingTexdb ? "Importando texdb" :
+                importingData ? "Importando data" :
+                importingAudio ? "Importando audio" :
+                "Importando SAMP";
 
         importDialog = new ProgressDialog(this);
         importDialog.setTitle(title);
@@ -403,14 +347,14 @@ private void openModelsFolderPicker() {
                 File root = getExternalFilesDir(null);
 
                 if (root == null) {
-                    throw new IOException("Pasta privada externa indisponÃ­vel.");
+                    throw new IOException("Pasta privada externa indisponível.");
                 }
 
                 File destination = new File(root, destinationFolder);
 
                 if (!destination.exists() && !destination.mkdirs()) {
                     throw new IOException(
-                            "NÃ£o foi possÃ­vel criar: " + destination.getAbsolutePath()
+                            "Não foi possível criar: " + destination.getAbsolutePath()
                     );
                 }
 
@@ -422,30 +366,6 @@ private void openModelsFolderPicker() {
 
                 copyDirectoryContents(treeUri, rootDocumentUri, destination);
 
-                if (importingTexdbGame) {
-                    File gta3Img = new File(root, "TEXDB/GTA3.IMG");
-                    if (!gta3Img.isFile() || gta3Img.length() <= 0) {
-                        throw new IOException(
-                                "GTA3.IMG nao foi encontrado dentro da pasta texdb selecionada."
-                        );
-                    }
-                }
-
-                // O cliente usa alguns arquivos diretamente em /files/SAMP.
-                // Quando a pasta SAMP for importada, mantemos também uma cópia
-                // compatível em /files/SAMP, além de /files/SAMP_app.
-                if (importingSamp) {
-                    File sampDestination = new File(root, "SAMP");
-
-                    if (!sampDestination.exists() && !sampDestination.mkdirs()) {
-                        throw new IOException(
-                                "Nao foi possivel criar: " + sampDestination.getAbsolutePath()
-                        );
-                    }
-
-                    copyDirectoryContents(treeUri, rootDocumentUri, sampDestination);
-                }
-
                 prefs.edit().putBoolean(prefKey, true).apply();
 
                 runOnUiThread(() -> {
@@ -453,14 +373,7 @@ private void openModelsFolderPicker() {
                         importDialog.dismiss();
                     }
 
-                    if (importingTexdbGame) {
-                        Toast.makeText(
-                                MainActivity.this,
-                                "TEXDB/GTA3.IMG corrigido. Agora pode tocar em JOGAR.",
-                                Toast.LENGTH_LONG
-                        ).show();
-
-                    } else if (importingTexdb) {
+                    if (importingTexdb) {
                         Toast.makeText(
                                 MainActivity.this,
                                 "texdb importado. Agora selecione Download/BetaTesterData/data.",
@@ -488,19 +401,13 @@ private void openModelsFolderPicker() {
                         openStreamFilePicker();
 
                     } else if (importingSamp) {
-    Toast.makeText(
-            MainActivity.this,
-            "SAMP importado. Agora selecione Download/BetaTesterData/models.",
-            Toast.LENGTH_LONG
-    ).show();
+                        Toast.makeText(
+                                MainActivity.this,
+                                "SAMP importado. Agora selecione Download/BetaTesterData/CINFO.BIN.",
+                                Toast.LENGTH_LONG
+                        ).show();
 
-    openModelsFolderPicker();
-} else if (importingModels) {
-    Toast.makeText(
-            MainActivity.this,
-            "Models importado com sucesso. Agora pode tocar em JOGAR.",
-            Toast.LENGTH_LONG
-    ).show();
+                        openCinfoFilePicker();
                     }
                 });
 
@@ -575,6 +482,59 @@ private void openModelsFolderPicker() {
         }).start();
     }
 
+    private void importCinfo(Uri sourceUri) {
+        importDialog = new ProgressDialog(this);
+        importDialog.setTitle("Importando CINFO.BIN");
+        importDialog.setMessage("Copiando cache de colisao...");
+        importDialog.setIndeterminate(true);
+        importDialog.setCancelable(false);
+        importDialog.show();
+
+        new Thread(() -> {
+            try {
+                File root = getExternalFilesDir(null);
+
+                if (root == null) {
+                    throw new IOException("Pasta privada externa indisponivel.");
+                }
+
+                File destination = new File(root, "CINFO_APP.BIN");
+                copyFile(getContentResolver(), sourceUri, destination);
+
+                if (!destination.isFile() || destination.length() <= 0) {
+                    throw new IOException("CINFO_APP.BIN nao foi criado corretamente.");
+                }
+
+                prefs.edit().putBoolean("cinfo_imported", true).apply();
+
+                runOnUiThread(() -> {
+                    if (importDialog != null && importDialog.isShowing()) {
+                        importDialog.dismiss();
+                    }
+
+                    Toast.makeText(
+                            MainActivity.this,
+                            "CINFO.BIN importado com sucesso. Agora pode tocar em JOGAR.",
+                            Toast.LENGTH_LONG
+                    ).show();
+                });
+
+            } catch (Exception e) {
+                runOnUiThread(() -> {
+                    if (importDialog != null && importDialog.isShowing()) {
+                        importDialog.dismiss();
+                    }
+
+                    Toast.makeText(
+                            MainActivity.this,
+                            "Erro ao importar CINFO.BIN: " + e.getMessage(),
+                            Toast.LENGTH_LONG
+                    ).show();
+                });
+            }
+        }).start();
+    }
+
     private void copyDirectoryContents(
             Uri treeUri,
             Uri sourceDirectoryUri,
@@ -602,7 +562,7 @@ private void openModelsFolderPicker() {
                 null
         )) {
             if (cursor == null) {
-                throw new IOException("NÃ£o foi possÃ­vel listar a pasta selecionada.");
+                throw new IOException("Não foi possível listar a pasta selecionada.");
             }
 
             int idColumn = cursor.getColumnIndexOrThrow(
@@ -630,7 +590,7 @@ private void openModelsFolderPicker() {
                 if (DocumentsContract.Document.MIME_TYPE_DIR.equals(mimeType)) {
                     if (!output.exists() && !output.mkdirs()) {
                         throw new IOException(
-                                "NÃ£o foi possÃ­vel criar a pasta: " + output.getAbsolutePath()
+                                "Não foi possível criar a pasta: " + output.getAbsolutePath()
                         );
                     }
 
@@ -653,7 +613,7 @@ private void openModelsFolderPicker() {
              FileOutputStream output = new FileOutputStream(destination, false)) {
 
             if (input == null) {
-                throw new IOException("NÃ£o foi possÃ­vel abrir: " + sourceUri);
+                throw new IOException("Não foi possível abrir: " + sourceUri);
             }
 
             byte[] buffer = new byte[1024 * 1024];
