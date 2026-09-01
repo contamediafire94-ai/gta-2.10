@@ -860,10 +860,12 @@ void CGame::Process() {
                 // v17: a campanha pode deixar a camera presa no estado da intro.
                 // Restauramos a camera normal e colocamos ela atras do player,
                 // sem mexer na conexao, TextDraws ou nos scripts do servidor.
-                TheCamera.Restore();
+                // Restore() existe na declaracao da classe, mas nao possui
+                // implementacao linkada nesta base arm64. SetBehindPlayer()
+                // ja e usado pelo proprio projeto e e suficiente para este teste.
                 CCamera::SetBehindPlayer();
 
-                FLog("SA-MP connected; story threads blocked, camera restored behind player");
+                FLog("SA-MP connected; story threads blocked, camera set behind player");
             }
         }
         // CCollision::Update()
