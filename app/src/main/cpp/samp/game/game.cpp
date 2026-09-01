@@ -849,10 +849,13 @@ void CGame::Process() {
             if (pNetGame && pNetGame->GetGameState() == GAMESTATE_CONNECTED)
             {
                 ++sampConnectedWarmupFrames;
-                if (sampConnectedWarmupFrames >= 3600)
+                // O SA-MP ja esta conectado. Mantemos apenas alguns frames
+                // para o GTA concluir a transicao/fade e depois paramos os
+                // scripts da campanha para ela nao cobrir o multiplayer.
+                if (sampConnectedWarmupFrames >= 180)
                 {
                     stopSinglePlayerScripts = true;
-                    FLog("SA-MP connected; GTA story scripts stopped after transition warm-up");
+                    FLog("SA-MP connected; GTA story scripts stopped after short warm-up");
                 }
             }
         }
