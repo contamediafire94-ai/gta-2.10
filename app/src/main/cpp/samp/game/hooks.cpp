@@ -1405,12 +1405,7 @@ struct stFile
 
 char lastFile[123];
 
-// Guarda a funcao original do GTA. Arquivos que NAO sao redirecionados
-// precisam passar por ela para manter leitura/escrita correta de caches,
-// configuracoes e outros arquivos internos.
-stFile* (*NvFOpen_orig)(const char*, const char*, int, int) = nullptr;
-
-stFile* NvFOpen_hook(const char* r0, const char* r1, int r2, int r3)
+stFile* NvFOpen(const char* r0, const char* r1, int r2, int r3)
 {
     strcpy(lastFile, r1);
 
@@ -1419,14 +1414,11 @@ stFile* NvFOpen_hook(const char* r0, const char* r1, int r2, int r3)
 
     sprintf(path, "%s%s", g_pszStorage, r1);
 
-    bool redirected = false;
-
     // Redireciona o arquivo de idioma para a copia criada pelo proprio app.
     if (!strncmp(r1, "TEXT/AMERICAN.GXT", 17))
     {
         sprintf(path, "%sAMERICAN_APP.GXT", g_pszStorage);
         FLog("Redirecting AMERICAN.GXT -> %s", path);
-        redirected = true;
     }
 
     // Todo acesso a texdb/ vai para a copia criada pelo proprio app.
@@ -1436,7 +1428,6 @@ stFile* NvFOpen_hook(const char* r0, const char* r1, int r2, int r3)
     {
         sprintf(path, "%stexdb_app/texdb/%s", g_pszStorage, r1 + 6);
         FLog("Redirecting TEXDB -> %s", path);
-        redirected = true;
     }
 
     // Todo acesso a data/ ou DATA/ vai para a copia criada pelo proprio app.
@@ -1459,7 +1450,6 @@ stFile* NvFOpen_hook(const char* r0, const char* r1, int r2, int r3)
         }
 
         FLog("Redirecting DATA -> %s", path);
-        redirected = true;
     }
 
 
@@ -1482,7 +1472,6 @@ stFile* NvFOpen_hook(const char* r0, const char* r1, int r2, int r3)
         }
 
         FLog("Redirecting AUDIO -> %s", path);
-        redirected = true;
     }
 
     // ----------------------------
@@ -1492,7 +1481,6 @@ stFile* NvFOpen_hook(const char* r0, const char* r1, int r2, int r3)
     {
         sprintf(path, "%sstream_app.ini", g_pszStorage);
         FLog("Redirecting STREAM.INI -> %s", path);
-        redirected = true;
     }
 
 if(!strncmp(r1+12, "mainV1.scm", 10))
@@ -1502,42 +1490,70 @@ if(!strncmp(r1+12, "mainV1.scm", 10))
         // replacing it with the much smaller SA-MP main.scm.
         sprintf(path, "%sSAMP_app/mainV1.scm", g_pszStorage);
         FLog("TEST: loading original mainV1.scm -> %s", path);
-        redirected = true;
     }
     // ----------------------------
     if(!strncmp(r1+12, "SCRIPTV1.IMG", 12))
     {
         sprintf(path, "%sSAMP_app/script.img", g_pszStorage);
         FLog("Loading script.img..");
-        redirected = true;
     }
     // ----------------------------
     if(!strncmp(r1, "DATA/PEDS.IDE", 13))
     {
         sprintf(path, "%sSAMP_app/peds.ide", g_pszStorage);
         FLog("Loading peds.ide..");
-        redirected = true;
     }
     // ----------------------------
     if(!strncmp(r1, "DATA/VEHICLES.IDE", 17))
     {
         sprintf(path, "%sSAMP_app/vehicles.ide", g_pszStorage);
         FLog("Loading vehicles.ide..");
-        redirected = true;
     }
 
     if (!strncmp(r1, "DATA/GTA.DAT", 12))
     {
         sprintf(path, "%sSAMP_app/gta.dat", g_pszStorage);
         FLog("Loading gta.dat..");
-        redirected = true;
     }
 
     if (!strncmp(r1, "DATA/WEAPON.DAT", 15))
     {
         sprintf(path, "%sSAMP_app/weapon.dat", g_pszStorage);
         FLog("Loading weapon.dat..");
-        redirected = true;
+    }
+
+    // CINFO.BIN e um cache de colisao que o GTA precisa escrever.
+    // O CINFO.BIN antigo esta com Permission denied, entao usamos um
+    // arquivo novo criado pelo proprio app e abrimos com leitura+escrita.
+    if (!strcmp(r1, "CINFO.BIN"))
+    {
+#if VER_x32
+        auto *st = (stFile*)malloc(8);
+#else
+        auto *st = (stFile*)malloc(0x10);
+#endif
+        st->isFileExist = false;
+
+        sprintf(path, "%sCINFO_APP.BIN", g_pszStorage);
+
+        errno = 0;
+        FILE *f = fopen(path, "r+b");
+        if (!f)
+            f = fopen(path, "w+b");
+
+        if (f)
+        {
+            st->isFileExist = true;
+            st->f = f;
+            FLog("CINFO writable OK | %s", path);
+            return st;
+        }
+
+        int openErr = errno;
+        FLog("CINFO writable FAIL | path=%s | errno=%d | %s",
+             path, openErr, strerror(openErr));
+        free(st);
+        return nullptr;
     }
 
     // SAMP IDE - o GTA pede "SAMP/samp.IDE", mas o arquivo do pacote
@@ -1550,17 +1566,6 @@ if(!strncmp(r1+12, "mainV1.scm", 10))
     {
         sprintf(path, "%sSAMP_app/SAMP.ide", g_pszStorage);
         FLog("Redirecting SAMP.IDE -> %s", path);
-        redirected = true;
-    }
-
-    // IMPORTANTE:
-    // Arquivos normais (CINFO.BIN, scache, gtasatelem.set etc.)
-    // voltam para a funcao original do GTA, que respeita os modos de
-    // leitura/escrita. O hook customizado usa fopen("rb") somente nos
-    // assets que nós redirecionamos.
-    if (!redirected)
-    {
-        return NvFOpen_orig(r0, r1, r2, r3);
     }
 
 #if VER_x32
@@ -2032,7 +2037,7 @@ void InstallSpecialHooks()
   //  CHook::RET("_ZN12CCutsceneMgr16LoadCutsceneDataEPKc"); // LoadCutsceneData
   //  CHook::RET("_ZN12CCutsceneMgr10InitialiseEv");			// CCutsceneMgr::Initialise
 
-    CHook::InlineHook("_Z7NvFOpenPKcS0_bb", &NvFOpen_hook, &NvFOpen_orig);
+    CHook::Redirect("_Z7NvFOpenPKcS0_bb", &NvFOpen);
 
     CHook::InlineHook("_ZN14MainMenuScreen6UpdateEf", &MainMenuScreen__Update_hook, &MainMenuScreen__Update);
 
