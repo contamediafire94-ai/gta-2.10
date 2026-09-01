@@ -109,7 +109,18 @@ public class MainActivity extends AppCompatActivity {
                     700
             );
         }
+else if (!prefs.getBoolean("models_imported", false)) {
+    Toast.makeText(
+            this,
+            "Selecione a pasta Download/BetaTesterData/models",
+            Toast.LENGTH_LONG
+    ).show();
 
+    findViewById(android.R.id.content).postDelayed(
+            this::openModelsFolderPicker,
+            700
+    );
+}
         jogar.setOnClickListener(v -> {
 
             String nick = editNick.getText().toString().trim();
@@ -270,9 +281,10 @@ private void openModelsFolderPicker() {
         }
 
         if ((requestCode != REQUEST_TEXDB_FOLDER
-                && requestCode != REQUEST_DATA_FOLDER
-                && requestCode != REQUEST_AUDIO_FOLDER
-                && requestCode != REQUEST_SAMP_FOLDER)
+        && requestCode != REQUEST_DATA_FOLDER
+        && requestCode != REQUEST_AUDIO_FOLDER
+        && requestCode != REQUEST_SAMP_FOLDER
+        && requestCode != REQUEST_MODELS_FOLDER)
                 || resultCode != RESULT_OK
                 || data == null
                 || data.getData() == null) {
@@ -293,24 +305,28 @@ private void openModelsFolderPicker() {
         final boolean importingData = requestCode == REQUEST_DATA_FOLDER;
         final boolean importingAudio = requestCode == REQUEST_AUDIO_FOLDER;
         final boolean importingSamp = requestCode == REQUEST_SAMP_FOLDER;
+        final boolean importingModels = requestCode == REQUEST_MODELS_FOLDER;
 
         final String destinationFolder =
-                importingTexdb ? "texdb_app" :
-                importingData ? "data_app" :
-                importingAudio ? "audio_app" :
-                "SAMP_app";
+        importingTexdb ? "texdb_app" :
+        importingData ? "data_app" :
+        importingAudio ? "audio_app" :
+        importingModels ? "models" :
+        "SAMP_app";
 
         final String prefKey =
-                importingTexdb ? "texdb_imported" :
-                importingData ? "data_imported" :
-                importingAudio ? "audio_imported" :
-                "samp_imported";
-
+        importingTexdb ? "texdb_imported" :
+        importingData ? "data_imported" :
+        importingAudio ? "audio_imported" :
+        importingModels ? "models_imported" :
+        "samp_imported";
+        
         final String title =
-                importingTexdb ? "Importando texdb" :
-                importingData ? "Importando data" :
-                importingAudio ? "Importando audio" :
-                "Importando SAMP";
+        importingTexdb ? "Importando texdb" :
+        importingData ? "Importando data" :
+        importingAudio ? "Importando audio" :
+        importingModels ? "Importando models" :
+        "Importando SAMP";
 
         importDialog = new ProgressDialog(this);
         importDialog.setTitle(title);
@@ -378,11 +394,19 @@ private void openModelsFolderPicker() {
                         openStreamFilePicker();
 
                     } else if (importingSamp) {
-                        Toast.makeText(
-                                MainActivity.this,
-                                "SAMP importado com sucesso. Agora pode tocar em JOGAR.",
-                                Toast.LENGTH_LONG
-                        ).show();
+    Toast.makeText(
+            MainActivity.this,
+            "SAMP importado. Agora selecione Download/BetaTesterData/models.",
+            Toast.LENGTH_LONG
+    ).show();
+
+    openModelsFolderPicker();
+} else if (importingModels) {
+    Toast.makeText(
+            MainActivity.this,
+            "Models importado com sucesso. Agora pode tocar em JOGAR.",
+            Toast.LENGTH_LONG
+    ).show();
                     }
                 });
 
