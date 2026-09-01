@@ -179,7 +179,15 @@ else if (!prefs.getBoolean("models_imported", false)) {
                 openSampFolderPicker();
                 return;
             }
-
+if (!prefs.getBoolean("models_imported", false)) {
+    Toast.makeText(
+            MainActivity.this,
+            "Importe a pasta models primeiro.",
+            Toast.LENGTH_LONG
+    ).show();
+    openModelsFolderPicker();
+    return;
+}
             prefs.edit().putString("nickname", nick).apply();
 
             Intent intent = new Intent(MainActivity.this, SAMP.class);
