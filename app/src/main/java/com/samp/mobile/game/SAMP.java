@@ -79,18 +79,8 @@ public class SAMP extends GTASA implements
             @Override
             public void run() {
                 if (mLoadingScreen != null) {
+                    Log.i(TAG, "V15C: hideLoadingScreen -> hiding Java overlay");
                     mLoadingScreen.hide();
-                }
-
-                // V15:
-                // A rede so e liberada quando o proprio GTA manda esconder
-                // a tela de loading. Isso substitui o antigo delay fixo
-                // de 120 frames usado no main.cpp.
-                try {
-                    Log.i(TAG, "V15: hideLoadingScreen -> nativeAllowNetworkInit()");
-                    nativeAllowNetworkInit();
-                } catch (UnsatisfiedLinkError e) {
-                    Log.e(TAG, "V15: nativeAllowNetworkInit failed", e);
                 }
             }
         });
@@ -237,7 +227,17 @@ public class SAMP extends GTASA implements
         mKeyboard = new CustomKeyboard(this);
         mDialog = new DialogManager(this);
         mAttachEdit = new AttachEdit(this);
-        mLoadingScreen = new LoadingScreen(this);
+        mLoadingScreen = new LoadingScreen(this, new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    Log.i(TAG, "V15C: loading UI ready -> nativeAllowNetworkInit()");
+                    nativeAllowNetworkInit();
+                } catch (UnsatisfiedLinkError e) {
+                    Log.e(TAG, "V15C: nativeAllowNetworkInit failed", e);
+                }
+            }
+        });
 
         instance = this;
 
