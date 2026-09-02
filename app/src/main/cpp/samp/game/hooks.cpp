@@ -45,14 +45,23 @@ CPedGTA* dwCurPlayerActor = 0;
 uint8_t byteCurPlayer = 0;
 uint8_t byteCurDriver = 0;
 
-// v16: depois que o SA-MP conecta, bloqueamos somente a execucao
-// dos threads da campanha. CTheScripts::Process continua rodando
-// para limpar os textos/retangulos de script a cada frame.
+// Bloqueia a campanha assim que o CNetGame existir, antes da conexao
+// terminar. Isso deixa o GTA ter um curto warm-up inicial, mas impede
+// que a intro offline avance ate Liberty City/1992.
 bool g_BlockGtaStoryScripts = false;
 
 void (*CRunningScript__Process)(void* thiz);
 void CRunningScript__Process_hook(void* thiz)
 {
+    // Antes, o bloqueio so era ativado depois de GAMESTATE_CONNECTED.
+    // Agora travamos os threads da campanha assim que o cliente SA-MP
+    // ja criou o CNetGame, ou seja, antes da intro offline continuar.
+    if (!g_BlockGtaStoryScripts && pNetGame != nullptr)
+    {
+        g_BlockGtaStoryScripts = true;
+        FLog("GTA story blocked early: CNetGame created before server connection");
+    }
+
     if (g_BlockGtaStoryScripts)
     {
         static bool logged = false;
