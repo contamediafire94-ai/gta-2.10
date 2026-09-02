@@ -864,15 +864,14 @@ void CGame::Process() {
             }
         }
 
-        // V7 DIAGNOSTICO:
-        // O V6 corrigiu o interior herdado do GTA (14 -> 0), mas o teste passou
-        // a cair com SIGBUS imediatamente depois do bloco de fade do V4.
-        // Para separar "fade/camera" de "renderizacao do mundo exterior", este
-        // build NAO chama CCamera::Fade() nem CCamera::ProcessFade().
-        // Mantemos todo o restante igual e deixamos o scriptrpc V6 ativo.
-        static bool sampConnectedNoFadeLogged = false;
+        // V8:
+        // O V7 provou que as chamadas diretas CCamera::Fade/ProcessFade causavam
+        // o SIGBUS. Agora removemos o preto SEM chamar essas funcoes: apenas
+        // neutralizamos o estado do fade ja existente e o valor usado pelo draw.
+        // A camera do servidor continua intacta.
+        static bool sampSafeFadeStateCleared = false;
 
-        if (!sampConnectedNoFadeLogged &&
+        if (!sampSafeFadeStateCleared &&
             pNetGame &&
             pNetGame->GetGameState() == GAMESTATE_CONNECTED)
         {
@@ -882,8 +881,14 @@ void CGame::Process() {
             {
                 ScriptCommand(&text_clear_all);
 
-                sampConnectedNoFadeLogged = true;
-                FLog("V7: connected; direct GTA camera fade disabled for SIGBUS isolation");
+                TheCamera.m_bFading = false;
+                TheCamera.m_fFadeAlpha = 0.0f;
+                TheCamera.m_fFadeDuration = 0.0f;
+                TheCamera.m_nFadeInOutFlag = 1;
+                CDraw::FadeValue = 0;
+
+                sampSafeFadeStateCleared = true;
+                FLog("V8: safe fade state cleared without calling CCamera::Fade/ProcessFade");
             }
         }
         // CCollision::Update()
