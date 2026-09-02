@@ -1640,20 +1640,14 @@ void MainMenu_OnStartSAMP()
     //InitInMenu();
     pGame->StartGame();
 
-    // A campanha precisa ficar bloqueada antes da transicao de "New Game",
-    // mas a transicao em si e importante para o GTA sair do frontend/menu
-    // e concluir a inicializacao do mundo 3D.
-    g_BlockGtaStoryScripts = true;
-    FLog("WORLD INIT: story blocked before OnNewGameCheck");
+    FLog("WORLD INIT V2: calling OnNewGameCheck with story temporarily allowed");
 
     (( void (*)())(g_libGTASA + (VER_x32 ? 0x002A7270 + 1 : 0x365EA0)))();
-    FLog("WORLD INIT: OnNewGameCheck returned");
 
-    //CHook::InlineHook(g_libGTASA, (VER_x32 ? 0x5A3E40 : , &DoSunAndMoon, &dword_67E048);
+    FLog("WORLD INIT V2: OnNewGameCheck returned; story will block when CNetGame exists");
 
     g_bPlaySAMP = true;
 }
-
 unsigned int (*MainMenuScreen__Update)(uintptr_t thiz, float a2);
 unsigned int MainMenuScreen__Update_hook(uintptr_t thiz, float a2)
 {
