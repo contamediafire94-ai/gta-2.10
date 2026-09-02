@@ -846,9 +846,26 @@ void CGame::Process() {
 
         ((void(*)())(g_libGTASA + (VER_x32 ? 0x0032AED8 + 1 : 0x3F3AD8)))(); // CTheScripts::Process()
 
-        // A campanha agora e bloqueada cedo no hooks.cpp, assim que o CNetGame existe.
-        // Aqui nao mexemos mais no estado da historia nem chamamos CCamera::Fade(),
-        // porque o ultimo teste mostrou SIGBUS imediatamente apos essa chamada.
+        // V3: o teste V2 mostrou que OnNewGameCheck termina sem crash, mas
+        // bloquear TODOS os CRunningScript imediatamente quando o CNetGame nasce
+        // ainda deixa o mundo 3D preto. Damos um curto warm-up adicional para o
+        // bootstrap normal do GTA terminar e so depois congelamos a campanha.
+        static int postNetGameScriptWarmupFrames = 0;
+
+        if (!g_BlockGtaStoryScripts && pNetGame)
+        {
+            ++postNetGameScriptWarmupFrames;
+
+            if (postNetGameScriptWarmupFrames >= 90)
+            {
+                g_BlockGtaStoryScripts = true;
+                ScriptCommand(&text_clear_all);
+                FLog("GTA story blocked after 90 post-CNetGame warm-up frames");
+            }
+        }
+
+        // Nao chamamos CCamera::Fade() nem SetBehindPlayer(): o servidor continua
+        // controlando a camera e evitamos o SIGBUS observado no teste do fade.
         static bool sampConnectedReadyLogged = false;
 
         if (!sampConnectedReadyLogged &&
@@ -859,12 +876,10 @@ void CGame::Process() {
 
             if (sampConnectedWarmupFrames >= 180)
             {
-                // Limpa apenas qualquer texto grande restante do GTA.
-                // A camera continua totalmente sob controle do servidor.
                 ScriptCommand(&text_clear_all);
 
                 sampConnectedReadyLogged = true;
-                FLog("SA-MP connected; early story block active; fade untouched; server camera preserved");
+                FLog("SA-MP connected; delayed story block active; fade untouched; server camera preserved");
             }
         }
         // CCollision::Update()

@@ -45,29 +45,20 @@ CPedGTA* dwCurPlayerActor = 0;
 uint8_t byteCurPlayer = 0;
 uint8_t byteCurDriver = 0;
 
-// Bloqueia a campanha assim que o CNetGame existir, antes da conexao
-// terminar. Isso deixa o GTA ter um curto warm-up inicial, mas impede
-// que a intro offline avance ate Liberty City/1992.
+// O momento do bloqueio da campanha agora e controlado pelo game.cpp.
+// Isso permite alguns frames extras de bootstrap do GTA depois que o
+// CNetGame existe, sem deixar a campanha avancar ate a intro offline.
 bool g_BlockGtaStoryScripts = false;
 
 void (*CRunningScript__Process)(void* thiz);
 void CRunningScript__Process_hook(void* thiz)
 {
-    // Antes, o bloqueio so era ativado depois de GAMESTATE_CONNECTED.
-    // Agora travamos os threads da campanha assim que o cliente SA-MP
-    // ja criou o CNetGame, ou seja, antes da intro offline continuar.
-    if (!g_BlockGtaStoryScripts && pNetGame != nullptr)
-    {
-        g_BlockGtaStoryScripts = true;
-        FLog("GTA story blocked early: CNetGame created before server connection");
-    }
-
     if (g_BlockGtaStoryScripts)
     {
         static bool logged = false;
         if (!logged)
         {
-            FLog("GTA story script threads blocked; keeping CTheScripts frame cleanup active");
+            FLog("GTA story script threads blocked after post-CNetGame warm-up");
             logged = true;
         }
         return;
@@ -1640,14 +1631,23 @@ void MainMenu_OnStartSAMP()
     //InitInMenu();
     pGame->StartGame();
 
+    // Deixa o GTA concluir a transicao New Game com os scripts normais ativos.
+    // O teste anterior mostrou que bloquear os scripts ANTES daqui deixa a camera
+    // sem target valido e causa SIGSEGV em CCamera::UpdateTargetEntity.
     FLog("WORLD INIT V2: calling OnNewGameCheck with story temporarily allowed");
 
     (( void (*)())(g_libGTASA + (VER_x32 ? 0x002A7270 + 1 : 0x365EA0)))();
 
     FLog("WORLD INIT V2: OnNewGameCheck returned; story will block when CNetGame exists");
 
+    // Nao seta g_BlockGtaStoryScripts aqui.
+    // O hook de CRunningScript::Process ja ativa o bloqueio automaticamente
+    // assim que pNetGame for criado, antes da campanha offline avancar.
+    //CHook::InlineHook(g_libGTASA, (VER_x32 ? 0x5A3E40 : , &DoSunAndMoon, &dword_67E048);
+
     g_bPlaySAMP = true;
 }
+
 unsigned int (*MainMenuScreen__Update)(uintptr_t thiz, float a2);
 unsigned int MainMenuScreen__Update_hook(uintptr_t thiz, float a2)
 {
