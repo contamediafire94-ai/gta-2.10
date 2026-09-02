@@ -76,7 +76,12 @@ void CGame::StartGame()
     ApplyGlobalPatches();
 
 	GameAimSyncInit();
-	InitScripting();
+
+    // V14:
+    // Nao inicializa o ScriptCommand helper antes do OnNewGameCheck.
+    // O bootstrap normal do GTA termina primeiro; InitScripting() agora
+    // acontece em CGame::Initialize(), ja na etapa in-game.
+    FLog("V14: pre-world bootstrap ready; InitScripting deferred until in-game init");
 }
 
 void InstallSAMPHooks();
@@ -87,6 +92,16 @@ void CGame::Initialize()
 	FLog("CGame initializing..");
 
     ApplySAMPPatchesInGame();
+
+    // V14:
+    // Ordem igual ao fluxo SA-MP tradicional:
+    // patches/hooks de menu -> OnNewGameCheck -> init in-game -> scripting.
+    // Isso evita criar o GAME_SCRIPT_THREAD auxiliar enquanto o GTA ainda
+    // esta no frontend/bootstrap do New Game.
+    FLog("V14: starting InitScripting after OnNewGameCheck/world bootstrap");
+    InitScripting();
+    FLog("V14: InitScripting complete in in-game stage");
+
 	GameResetRadarColors();
 
     szGameTextMessage = new uint16_t[1076];
