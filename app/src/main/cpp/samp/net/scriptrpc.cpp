@@ -35,6 +35,9 @@ void ScrSetCameraPos(RPCParameters *rpcParams)
 
     CCamera::SetPosition(fX, fY, fZ, 0.0f, 0.0f, 0.0f);
 
+    FLog("ScrSetCameraPos: %.2f %.2f %.2f | refresh streaming", fX, fY, fZ);
+    pGame->RefreshStreamingAt(fX, fY);
+
 	return;
 }
 // 0.3.7
@@ -1308,6 +1311,8 @@ void ScrSetPlayerPos(RPCParameters* rpcParams)
     else
         pLocalPlayer->GetPlayerPed()->m_pPed->SetPosn(vecPos.x, vecPos.y, vecPos.z);
 
+    FLog("ScrSetPlayerPos: %.2f %.2f %.2f | refresh streaming",
+         vecPos.x, vecPos.y, vecPos.z);
     pGame->RefreshStreamingAt(vecPos.x, vecPos.y);
 }
 // 0.3.7
