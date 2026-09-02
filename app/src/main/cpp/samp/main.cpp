@@ -382,7 +382,31 @@ JNIEXPORT void JNICALL Java_com_samp_mobile_game_SAMP_setLauncherNickname(
 
     if (value != nullptr)
     {
+        // Guarda o nick recebido do launcher.
         snprintf(g_launcherNickname, sizeof(g_launcherNickname), "%s", value);
+
+        // ReadSettingFile() pode ter rodado antes do onCreate() do SAMP.
+        // Nesse caso pSettings ja existe com o nick padrao/antigo.
+        // Atualizamos tambem o CSettings ativo antes do CNetGame conectar.
+        if (pSettings)
+        {
+            snprintf(
+                pSettings->Get().szNickName,
+                sizeof(pSettings->Get().szNickName),
+                "%s",
+                g_launcherNickname
+            );
+
+            firebase::crashlytics::SetUserId(pSettings->Get().szNickName);
+            FLog("Launcher nickname applied to active SA-MP settings: %s",
+                 pSettings->Get().szNickName);
+        }
+        else
+        {
+            FLog("Launcher nickname stored before settings init: %s",
+                 g_launcherNickname);
+        }
+
         pEnv->ReleaseStringUTFChars(nickname, value);
     }
 }
