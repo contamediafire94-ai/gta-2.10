@@ -1748,6 +1748,24 @@ unsigned int (*MainMenuScreen__Update)(uintptr_t thiz, float a2);
 unsigned int MainMenuScreen__Update_hook(uintptr_t thiz, float a2)
 {
     unsigned int ret = MainMenuScreen__Update(thiz, a2);
+
+    // V13 DIAGNOSTICO:
+    // O V12 mostrou SA-MP conectado e estavel, mas nenhum dos callbacks do
+    // render 3D/RenderEffects/Render2dStuff instrumentados foi executado.
+    // Agora confirmamos se o GTA continua preso no frontend/menu mesmo depois
+    // de o SA-MP chegar ao estado CONNECTED.
+    if (pNetGame &&
+        pNetGame->GetGameState() == GAMESTATE_CONNECTED)
+    {
+        static bool loggedV13MenuStillUpdating = false;
+        if (!loggedV13MenuStillUpdating)
+        {
+            FLog("V13: MainMenuScreen::Update still running while SA-MP is CONNECTED | g_bPlaySAMP=%d",
+                 g_bPlaySAMP ? 1 : 0);
+            loggedV13MenuStillUpdating = true;
+        }
+    }
+
     MainMenu_OnStartSAMP();
     return ret;
 }
@@ -1755,9 +1773,18 @@ unsigned int MainMenuScreen__Update_hook(uintptr_t thiz, float a2)
 void (*StartGameScreen__OnNewGameCheck)();
 void StartGameScreen__OnNewGameCheck_hook()
 {
-    // отключить кнопку начать игру
+    // V13: registra se o frontend ainda tenta disparar NewGameCheck depois que
+    // nossa inicializacao SA-MP ja marcou g_bPlaySAMP.
     if(g_bPlaySAMP)
+    {
+        static bool loggedV13NewGameSuppressed = false;
+        if (!loggedV13NewGameSuppressed)
+        {
+            FLog("V13: StartGameScreen::OnNewGameCheck suppressed because g_bPlaySAMP=1");
+            loggedV13NewGameSuppressed = true;
+        }
         return;
+    }
 
     StartGameScreen__OnNewGameCheck();
 }
