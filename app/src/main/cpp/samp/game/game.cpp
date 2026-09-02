@@ -864,11 +864,12 @@ void CGame::Process() {
             }
         }
 
-        // Nao chamamos CCamera::Fade() nem SetBehindPlayer(): o servidor continua
-        // controlando a camera e evitamos o SIGBUS observado no teste do fade.
-        static bool sampConnectedReadyLogged = false;
+        // V4: agora o OnNewGameCheck ja conclui a inicializacao do mundo/camera.
+        // O V3 provou que atrasar o bloqueio dos scripts nao tira o preto.
+        // Entao removemos apenas o fade preto, preservando a camera do servidor.
+        static bool sampFadeForcedVisible = false;
 
-        if (!sampConnectedReadyLogged &&
+        if (!sampFadeForcedVisible &&
             pNetGame &&
             pNetGame->GetGameState() == GAMESTATE_CONNECTED)
         {
@@ -878,8 +879,15 @@ void CGame::Process() {
             {
                 ScriptCommand(&text_clear_all);
 
-                sampConnectedReadyLogged = true;
-                FLog("SA-MP connected; delayed story block active; fade untouched; server camera preserved");
+                FLog("V4: forcing GTA camera fade visible after world init");
+
+                CHook::CallFunction<void>("_ZN7CCamera4FadeEfs",
+                                          &TheCamera, 0.0f, (short)1);
+                CHook::CallFunction<void>("_ZN7CCamera11ProcessFadeEv",
+                                          &TheCamera);
+
+                sampFadeForcedVisible = true;
+                FLog("SA-MP connected; world init complete; fade forced visible; server camera preserved");
             }
         }
         // CCollision::Update()
