@@ -42,7 +42,8 @@ public class SAMP extends GTASA implements
         return instance;
     }
 
-    private void hideSystemUI() {
+    @Override
+    public void hideSystemUI() {
         getWindow().setFlags(
                 WindowManager.LayoutParams.FLAG_FULLSCREEN,
                 WindowManager.LayoutParams.FLAG_FULLSCREEN
