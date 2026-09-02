@@ -846,7 +846,12 @@ void CGame::Process() {
 
         ((void(*)())(g_libGTASA + (VER_x32 ? 0x0032AED8 + 1 : 0x3F3AD8)))(); // CTheScripts::Process()
 
-        if (!g_BlockGtaStoryScripts &&
+        // A historia do GTA agora ja e bloqueada cedo no hooks.cpp.
+        // Portanto o fade NAO pode depender de !g_BlockGtaStoryScripts,
+        // senao a tela fica preta para sempre depois que o SA-MP conecta.
+        static bool sampFadeForcedVisible = false;
+
+        if (!sampFadeForcedVisible &&
             pNetGame &&
             pNetGame->GetGameState() == GAMESTATE_CONNECTED)
         {
@@ -854,24 +859,17 @@ void CGame::Process() {
 
             if (sampConnectedWarmupFrames >= 180)
             {
-                g_BlockGtaStoryScripts = true;
                 ScriptCommand(&text_clear_all);
 
-                // v17: a campanha pode deixar a camera presa no estado da intro.
-                // Restauramos a camera normal e colocamos ela atras do player,
-                // sem mexer na conexao, TextDraws ou nos scripts do servidor.
-                // Restore() existe na declaracao da classe, mas nao possui
-                // implementacao linkada nesta base arm64. SetBehindPlayer()
-                // ja e usado pelo proprio projeto e e suficiente para este teste.
-                // v19: o v18 provou que o preto era o fade da intro.
-                // Nao forçamos mais SetBehindPlayer(), pois o servidor deve
-                // controlar a camera via seus proprios RPCs durante login/whitelist.
+                // Mantem a camera do servidor intacta e apenas remove o fade
+                // deixado pela inicializacao do GTA.
                 CHook::CallFunction<void>("_ZN7CCamera4FadeEfs",
                                           &TheCamera, 0.0f, (short)1);
                 CHook::CallFunction<void>("_ZN7CCamera11ProcessFadeEv",
                                           &TheCamera);
 
-                FLog("SA-MP connected; story blocked, fade forced visible, server camera preserved");
+                sampFadeForcedVisible = true;
+                FLog("SA-MP connected; fade forced visible after early story block; server camera preserved");
             }
         }
         // CCollision::Update()
