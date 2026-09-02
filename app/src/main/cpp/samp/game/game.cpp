@@ -846,12 +846,12 @@ void CGame::Process() {
 
         ((void(*)())(g_libGTASA + (VER_x32 ? 0x0032AED8 + 1 : 0x3F3AD8)))(); // CTheScripts::Process()
 
-        // A historia do GTA agora ja e bloqueada cedo no hooks.cpp.
-        // Portanto o fade NAO pode depender de !g_BlockGtaStoryScripts,
-        // senao a tela fica preta para sempre depois que o SA-MP conecta.
-        static bool sampFadeForcedVisible = false;
+        // A campanha agora e bloqueada cedo no hooks.cpp, assim que o CNetGame existe.
+        // Aqui nao mexemos mais no estado da historia nem chamamos CCamera::Fade(),
+        // porque o ultimo teste mostrou SIGBUS imediatamente apos essa chamada.
+        static bool sampConnectedReadyLogged = false;
 
-        if (!sampFadeForcedVisible &&
+        if (!sampConnectedReadyLogged &&
             pNetGame &&
             pNetGame->GetGameState() == GAMESTATE_CONNECTED)
         {
@@ -859,17 +859,12 @@ void CGame::Process() {
 
             if (sampConnectedWarmupFrames >= 180)
             {
+                // Limpa apenas qualquer texto grande restante do GTA.
+                // A camera continua totalmente sob controle do servidor.
                 ScriptCommand(&text_clear_all);
 
-                // Mantem a camera do servidor intacta e apenas remove o fade
-                // deixado pela inicializacao do GTA.
-                CHook::CallFunction<void>("_ZN7CCamera4FadeEfs",
-                                          &TheCamera, 0.0f, (short)1);
-                CHook::CallFunction<void>("_ZN7CCamera11ProcessFadeEv",
-                                          &TheCamera);
-
-                sampFadeForcedVisible = true;
-                FLog("SA-MP connected; fade forced visible after early story block; server camera preserved");
+                sampConnectedReadyLogged = true;
+                FLog("SA-MP connected; early story block active; fade untouched; server camera preserved");
             }
         }
         // CCollision::Update()
