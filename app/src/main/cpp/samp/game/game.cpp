@@ -896,18 +896,42 @@ void CGame::Process() {
             {
                 ScriptCommand(&text_clear_all);
 
-                // V9 DIAGNOSTICO:
-                // O V8B provou que apenas limpar m_bFading nao remove o preto.
-                // O V4 chamava Fade() + ProcessFade() juntos e depois caia com SIGBUS.
-                // Aqui isolamos somente Fade(), com duracao positiva, e deixamos
-                // o processamento normal do motor cuidar da transicao.
-                FLog("V9: calling CCamera::Fade only; ProcessFade remains untouched");
+                // V16:
+                // O GetScreenFadeStatus() do GTA 2.10 retorna:
+                //   0 quando o alpha de fade e 0
+                //   1 durante a transicao
+                //   2 quando o alpha esta em 255 (tela totalmente coberta)
+                //
+                // O Idle() do GTA zera a area de render quando esse status e 2.
+                // Isso explica por que CGame::Process continua rodando e o SA-MP
+                // conecta, mas RenderScene/RenderEffects/Render2dStuff nao entram.
+                //
+                // Em vez de chamar CCamera::Fade() (que no V4/V9 ativou o render e
+                // depois acabou associado ao SIGBUS), limpamos somente o alpha bruto
+                // usado por GetScreenFadeStatus e desligamos m_bFading.
+                const uintptr_t fadeAlphaOffset = VER_x32 ? 0x0B84 : 0x0C28;
+                float* pFadeAlpha = reinterpret_cast<float*>(
+                        reinterpret_cast<uintptr_t>(&TheCamera) + fadeAlphaOffset);
 
-                CHook::CallFunction<void>("_ZN7CCamera4FadeEfs",
-                                          &TheCamera, 0.5f, (short)1);
+                const float fadeAlphaBefore = *pFadeAlpha;
+                const int fadeStatusBefore =
+                        CHook::CallFunction<int>("_ZN7CCamera19GetScreenFadeStatusEv",
+                                                 &TheCamera);
+
+                *pFadeAlpha = 0.0f;
+                TheCamera.m_bFading = false;
+
+                const int fadeStatusAfter =
+                        CHook::CallFunction<int>("_ZN7CCamera19GetScreenFadeStatusEv",
+                                                 &TheCamera);
+
+                FLog("V16: raw screen fade alpha %.2f -> %.2f | status %d -> %d | m_bFading=0",
+                     fadeAlphaBefore,
+                     *pFadeAlpha,
+                     fadeStatusBefore,
+                     fadeStatusAfter);
 
                 sampSafeFadeStateCleared = true;
-                FLog("V9: Fade-only call returned; waiting for normal engine fade processing");
             }
         }
         // CCollision::Update()
