@@ -865,7 +865,15 @@ void CGame::Process() {
                 // ja e usado pelo proprio projeto e e suficiente para este teste.
                 CCamera::SetBehindPlayer();
 
-                FLog("SA-MP connected; story threads blocked, camera set behind player");
+                // v18: a camera ja voltou para tras do player, mas a tela continua
+                // preta. Forcamos o fade do GTA para o estado visivel.
+                // FadeInOutFlag = 1 -> FADE_IN (sai do preto e volta para o jogo).
+                CHook::CallFunction<void>("_ZN7CCamera4FadeEfs",
+                                          &TheCamera, 0.0f, (short)1);
+                CHook::CallFunction<void>("_ZN7CCamera11ProcessFadeEv",
+                                          &TheCamera);
+
+                FLog("SA-MP connected; story blocked, camera behind player, fade forced visible");
             }
         }
         // CCollision::Update()
