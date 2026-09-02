@@ -402,15 +402,36 @@ void CEntity_Render_hook(CEntityGTA* pEntity)
 
     if (pEntity)
     {
-        g_iLastRenderedObject = pEntity->GetModelId();
+        const int modelId = pEntity->GetModelId();
+
+        // V17 DIAGNOSTICO:
+        // O V16 confirmou que o fade 255/status 2 estava bloqueando o render.
+        // Assim que o render 3D foi liberado, o primeiro SIGBUS voltou sempre
+        // no mesmo ponto, logo apos entrar no modelo 1268.
+        //
+        // Pulamos SOMENTE esse modelo para confirmar se ele e o gatilho
+        // especifico do crash ou apenas o primeiro objeto atingido por um
+        // problema mais amplo do pipeline.
+        if (modelId == 1268)
+        {
+            static bool loggedV17Skip1268 = false;
+            if (!loggedV17Skip1268)
+            {
+                FLog("V17: skipping GTA model 1268 before CEntity::Render for SIGBUS isolation");
+                loggedV17Skip1268 = true;
+            }
+            return;
+        }
+
+        g_iLastRenderedObject = modelId;
 
         if (pNetGame && pNetGame->GetGameState() == GAMESTATE_CONNECTED)
         {
             static int v12EntityProbeCount = 0;
-            if (v12EntityProbeCount < 3)
+            if (v12EntityProbeCount < 6)
             {
-                FLog("V12: 3D entity render | model=%d entity=%p rwObject=%p",
-                     pEntity->GetModelId(),
+                FLog("V17: 3D entity render | model=%d entity=%p rwObject=%p",
+                     modelId,
                      pEntity,
                      pEntity->m_pRwObject);
                 ++v12EntityProbeCount;
