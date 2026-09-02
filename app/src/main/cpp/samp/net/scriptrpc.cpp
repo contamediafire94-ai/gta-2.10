@@ -7,6 +7,35 @@ extern CGame *pGame;
 extern CNetGame *pNetGame;
 extern CAudioStream* pAudioStream;
 
+// V6: o GTA estava chegando ao primeiro SetPlayerPos do servidor ainda no
+// interior 14 herdado do bootstrap da campanha. Se o servidor ainda nao enviou
+// nenhum RPC de interior, esse valor e estado velho do GTA e deve voltar para
+// o mundo exterior (0) antes do primeiro streaming/camera do SA-MP.
+static bool g_V6ServerInteriorReceived = false;
+
+static void V6ClearStaleGtaInterior(CPlayerPed* pPlayerPed)
+{
+    if (g_V6ServerInteriorReceived ||
+        !pGame ||
+        !pPlayerPed ||
+        !pPlayerPed->m_pPed)
+    {
+        return;
+    }
+
+    const uint8_t oldArea = pGame->GetActiveInterior();
+    if (oldArea == 0)
+    {
+        return;
+    }
+
+    pPlayerPed->m_pPed->SetInterior(0, true);
+
+    FLog("V6: stale GTA interior cleared %u -> %u before first SA-MP scene",
+         (unsigned int)oldArea,
+         (unsigned int)pGame->GetActiveInterior());
+}
+
 // 0.3.7
 void ScrSetGravity(RPCParameters *rpcParams)
 {
@@ -678,6 +707,9 @@ void ScrSetPlayerInterior(RPCParameters* rpcParams)
 	RakNet::BitStream bsData((unsigned char*)Data, (iBitLength / 8) + 1, false);
 	bsData.Read(byteInteriorId);
 
+    // A partir daqui o interior passa a ser decisao real do servidor.
+    g_V6ServerInteriorReceived = true;
+
     CPlayerPed* pPlayerPed = pGame->FindPlayerPed();
     if (!pPlayerPed || !pPlayerPed->m_pPed) {
         FLog("ScrSetPlayerInterior V5: ped unavailable | requested=%u",
@@ -1323,10 +1355,16 @@ void ScrSetPlayerPos(RPCParameters* rpcParams)
 
     pLocalPlayer->DisableSurf();
 
-    if(pLocalPlayer->GetPlayerPed()->m_pPed->IsInVehicle())
-        pLocalPlayer->GetPlayerPed()->RemoveFromVehicleAndPutAt(vecPos.x, vecPos.y, vecPos.z);
+    CPlayerPed* pPlayerPed = pLocalPlayer->GetPlayerPed();
+    if (!pPlayerPed || !pPlayerPed->m_pPed)
+        return;
+
+    V6ClearStaleGtaInterior(pPlayerPed);
+
+    if(pPlayerPed->m_pPed->IsInVehicle())
+        pPlayerPed->RemoveFromVehicleAndPutAt(vecPos.x, vecPos.y, vecPos.z);
     else
-        pLocalPlayer->GetPlayerPed()->m_pPed->SetPosn(vecPos.x, vecPos.y, vecPos.z);
+        pPlayerPed->m_pPed->SetPosn(vecPos.x, vecPos.y, vecPos.z);
 
     FLog("ScrSetPlayerPos V5: %.2f %.2f %.2f | activeInterior=%u | refresh + load requested models",
          vecPos.x, vecPos.y, vecPos.z,
@@ -1354,9 +1392,15 @@ void ScrSetPlayerPosFindZ(RPCParameters* rpcParams)
 	CLocalPlayer* pLocalPlayer = pPlayerPool->GetLocalPlayer();
 	if (!pLocalPlayer) return;
 
+    CPlayerPed* pPlayerPed = pLocalPlayer->GetPlayerPed();
+    if (!pPlayerPed || !pPlayerPed->m_pPed)
+        return;
+
+    V6ClearStaleGtaInterior(pPlayerPed);
+
 	vecPos.z = pGame->FindGroundZForCoord(vecPos.x, vecPos.y, vecPos.z) + 1.5f;
     pLocalPlayer->DisableSurf();
-	pLocalPlayer->GetPlayerPed()->m_pPed->SetPosn(vecPos.x, vecPos.y, vecPos.z);
+	pPlayerPed->m_pPed->SetPosn(vecPos.x, vecPos.y, vecPos.z);
 
     FLog("ScrSetPlayerPosFindZ V5: %.2f %.2f %.2f | activeInterior=%u | refresh + load requested models",
          vecPos.x, vecPos.y, vecPos.z,
