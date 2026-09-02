@@ -863,17 +863,15 @@ void CGame::Process() {
                 // Restore() existe na declaracao da classe, mas nao possui
                 // implementacao linkada nesta base arm64. SetBehindPlayer()
                 // ja e usado pelo proprio projeto e e suficiente para este teste.
-                CCamera::SetBehindPlayer();
-
-                // v18: a camera ja voltou para tras do player, mas a tela continua
-                // preta. Forcamos o fade do GTA para o estado visivel.
-                // FadeInOutFlag = 1 -> FADE_IN (sai do preto e volta para o jogo).
+                // v19: o v18 provou que o preto era o fade da intro.
+                // Nao forçamos mais SetBehindPlayer(), pois o servidor deve
+                // controlar a camera via seus proprios RPCs durante login/whitelist.
                 CHook::CallFunction<void>("_ZN7CCamera4FadeEfs",
                                           &TheCamera, 0.0f, (short)1);
                 CHook::CallFunction<void>("_ZN7CCamera11ProcessFadeEv",
                                           &TheCamera);
 
-                FLog("SA-MP connected; story blocked, camera behind player, fade forced visible");
+                FLog("SA-MP connected; story blocked, fade forced visible, server camera preserved");
             }
         }
         // CCollision::Update()
