@@ -1,6 +1,5 @@
 package com.samp.mobile.game;
 
-import android.content.Context;
 import android.os.Bundle;
 import android.util.Log;
 import android.view.KeyEvent;
@@ -13,10 +12,6 @@ import com.samp.mobile.game.ui.CustomKeyboard;
 import com.samp.mobile.game.ui.LoadingScreen;
 import com.samp.mobile.game.ui.dialog.DialogManager;
 
-import java.io.File;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.io.InputStream;
 import java.io.UnsupportedEncodingException;
 import java.nio.charset.StandardCharsets;
 
@@ -38,6 +33,7 @@ public class SAMP extends GTASA implements
     public native void sendDialogResponse(int i, int i2, int i3, byte[] str);
 
     private native void initializeSAMP();
+    private native void nativeAllowNetworkInit();
     private native void setLauncherNickname(String nickname);
     private native void onInputEnd(byte[] str);
     public native void onEventBackPressed();
@@ -46,52 +42,7 @@ public class SAMP extends GTASA implements
         return instance;
     }
 
-    @Override
-    protected void attachBaseContext(Context newBase) {
-        super.attachBaseContext(newBase);
-
-        // Prepara o arquivo de idioma antes do onCreate/GTASA iniciar.
-        // Ele vem de app/src/main/assets/AMERICAN.GXT e é gravado
-        // pelo próprio aplicativo na pasta externa privada do app.
-        prepareAmericanGxt(newBase);
-    }
-
-    private void prepareAmericanGxt(Context context) {
-        File root = context.getExternalFilesDir(null);
-
-        if (root == null) {
-            Log.e(TAG, "Nao foi possivel obter a pasta externa privada do app");
-            return;
-        }
-
-        // Grava diretamente na raiz privada externa do app.
-        // A pasta SAMP existente está retornando EACCES / Permission denied
-        // para os arquivos que foram colocados nela manualmente.
-        File target = new File(root, "AMERICAN_APP.GXT");
-
-        try (InputStream input = context.getAssets().open("AMERICAN.GXT");
-             FileOutputStream output = new FileOutputStream(target, false)) {
-
-            byte[] buffer = new byte[8192];
-            int read;
-
-            while ((read = input.read(buffer)) != -1) {
-                output.write(buffer, 0, read);
-            }
-
-            output.flush();
-
-            Log.i(TAG, "AMERICAN.GXT preparado pelo app em: "
-                    + target.getAbsolutePath()
-                    + " | bytes=" + target.length());
-
-        } catch (IOException e) {
-            Log.e(TAG, "Erro ao preparar AMERICAN.GXT", e);
-        }
-    }
-
-    @Override
-    public void hideSystemUI() {
+    private void hideSystemUI() {
         getWindow().setFlags(
                 WindowManager.LayoutParams.FLAG_FULLSCREEN,
                 WindowManager.LayoutParams.FLAG_FULLSCREEN
@@ -128,6 +79,17 @@ public class SAMP extends GTASA implements
             public void run() {
                 if (mLoadingScreen != null) {
                     mLoadingScreen.hide();
+                }
+
+                // V15:
+                // A rede so e liberada quando o proprio GTA manda esconder
+                // a tela de loading. Isso substitui o antigo delay fixo
+                // de 120 frames usado no main.cpp.
+                try {
+                    Log.i(TAG, "V15: hideLoadingScreen -> nativeAllowNetworkInit()");
+                    nativeAllowNetworkInit();
+                } catch (UnsatisfiedLinkError e) {
+                    Log.e(TAG, "V15: nativeAllowNetworkInit failed", e);
                 }
             }
         });
