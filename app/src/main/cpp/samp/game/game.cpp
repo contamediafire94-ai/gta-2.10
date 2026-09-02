@@ -881,14 +881,14 @@ void CGame::Process() {
             {
                 ScriptCommand(&text_clear_all);
 
+                // Esta base expoe m_bFading na classe CCamera, mas nao expoe
+                // os outros campos de fade usados no primeiro V8. Mantemos apenas
+                // o membro que existe para o teste compilar sem reintroduzir
+                // CCamera::Fade/ProcessFade, que no V4 causou SIGBUS.
                 TheCamera.m_bFading = false;
-                TheCamera.m_fFadeAlpha = 0.0f;
-                TheCamera.m_fFadeDuration = 0.0f;
-                TheCamera.m_nFadeInOutFlag = 1;
-                CDraw::FadeValue = 0;
 
                 sampSafeFadeStateCleared = true;
-                FLog("V8: safe fade state cleared without calling CCamera::Fade/ProcessFade");
+                FLog("V8B: camera fading flag cleared safely; no direct Fade/ProcessFade calls");
             }
         }
         // CCollision::Update()
