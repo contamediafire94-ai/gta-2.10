@@ -864,12 +864,15 @@ void CGame::Process() {
             }
         }
 
-        // V4: agora o OnNewGameCheck ja conclui a inicializacao do mundo/camera.
-        // O V3 provou que atrasar o bloqueio dos scripts nao tira o preto.
-        // Entao removemos apenas o fade preto, preservando a camera do servidor.
-        static bool sampFadeForcedVisible = false;
+        // V7 DIAGNOSTICO:
+        // O V6 corrigiu o interior herdado do GTA (14 -> 0), mas o teste passou
+        // a cair com SIGBUS imediatamente depois do bloco de fade do V4.
+        // Para separar "fade/camera" de "renderizacao do mundo exterior", este
+        // build NAO chama CCamera::Fade() nem CCamera::ProcessFade().
+        // Mantemos todo o restante igual e deixamos o scriptrpc V6 ativo.
+        static bool sampConnectedNoFadeLogged = false;
 
-        if (!sampFadeForcedVisible &&
+        if (!sampConnectedNoFadeLogged &&
             pNetGame &&
             pNetGame->GetGameState() == GAMESTATE_CONNECTED)
         {
@@ -879,15 +882,8 @@ void CGame::Process() {
             {
                 ScriptCommand(&text_clear_all);
 
-                FLog("V4: forcing GTA camera fade visible after world init");
-
-                CHook::CallFunction<void>("_ZN7CCamera4FadeEfs",
-                                          &TheCamera, 0.0f, (short)1);
-                CHook::CallFunction<void>("_ZN7CCamera11ProcessFadeEv",
-                                          &TheCamera);
-
-                sampFadeForcedVisible = true;
-                FLog("SA-MP connected; world init complete; fade forced visible; server camera preserved");
+                sampConnectedNoFadeLogged = true;
+                FLog("V7: connected; direct GTA camera fade disabled for SIGBUS isolation");
             }
         }
         // CCollision::Update()
