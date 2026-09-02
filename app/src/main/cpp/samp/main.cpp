@@ -48,8 +48,13 @@ bool bDebug = false;
 bool bGameInited = false;
 bool bNetworkInited = false;
 
-// Give GTA a few frames to finish loading main.scm before SA-MP networking starts.
-static int g_networkInitDelayFrames = 0;
+// V15 - fluxo inspirado na APK de referencia:
+// a rede NAO inicia por contagem fixa de frames.
+// Ela fica bloqueada ate a tela de loading do GTA avisar explicitamente
+// que terminou, via SAMP.nativeAllowNetworkInit().
+static bool g_networkInitAllowed = false;
+static bool g_networkWaitLogged = false;
+static bool g_networkAllowedLogged = false;
 static int g_networkProcessDelayFrames = 0;
 
 uintptr_t g_libGTASA = 0x00;
@@ -283,21 +288,26 @@ void DoInitStuff() {
         }
 
         bGameInited = true;
-        FLog("Game initialization finished; network will start after warm-up");
+        FLog("V15: game init finished; network is gated by loading-screen callback");
         return;
     }
 
     if (!bNetworkInited && !bDebug && !serverConnect) {
 
-        // Avoid creating CNetGame while GTA is still finishing main.scm.
-        if (g_networkInitDelayFrames < 120) {
-            ++g_networkInitDelayFrames;
-
-            if (g_networkInitDelayFrames == 1) {
-                FLog("Waiting for GTA script warm-up before CNetGame");
+        // V15:
+        // Igual ao padrao observado na APK de referencia: CNetGame so nasce
+        // depois que o loading do GTA libera explicitamente a rede.
+        if (!g_networkInitAllowed) {
+            if (!g_networkWaitLogged) {
+                FLog("V15: Network init waiting for loading screen");
+                g_networkWaitLogged = true;
             }
-
             return;
+        }
+
+        if (!g_networkAllowedLogged) {
+            FLog("V15: Network init allowed after loading screen");
+            g_networkAllowedLogged = true;
         }
 
         int serverid = pSettings->GetReadOnly().iServerID;
@@ -371,6 +381,17 @@ extern "C" {
 
 	}
 
+JNIEXPORT void JNICALL Java_com_samp_mobile_game_SAMP_nativeAllowNetworkInit(
+        JNIEnv *pEnv,
+        jobject thiz)
+{
+    if (!g_networkInitAllowed)
+    {
+        FLog("V15: Loading screen hidden, allowing network init");
+        g_networkInitAllowed = true;
+    }
+}
+
 JNIEXPORT void JNICALL Java_com_samp_mobile_game_SAMP_setLauncherNickname(
         JNIEnv *pEnv,
         jobject thiz,
@@ -382,31 +403,7 @@ JNIEXPORT void JNICALL Java_com_samp_mobile_game_SAMP_setLauncherNickname(
 
     if (value != nullptr)
     {
-        // Guarda o nick recebido do launcher.
         snprintf(g_launcherNickname, sizeof(g_launcherNickname), "%s", value);
-
-        // ReadSettingFile() pode ter rodado antes do onCreate() do SAMP.
-        // Nesse caso pSettings ja existe com o nick padrao/antigo.
-        // Atualizamos tambem o CSettings ativo antes do CNetGame conectar.
-        if (pSettings)
-        {
-            snprintf(
-                pSettings->Get().szNickName,
-                sizeof(pSettings->Get().szNickName),
-                "%s",
-                g_launcherNickname
-            );
-
-            firebase::crashlytics::SetUserId(pSettings->Get().szNickName);
-            FLog("Launcher nickname applied to active SA-MP settings: %s",
-                 pSettings->Get().szNickName);
-        }
-        else
-        {
-            FLog("Launcher nickname stored before settings init: %s",
-                 g_launcherNickname);
-        }
-
         pEnv->ReleaseStringUTFChars(nickname, value);
     }
 }
