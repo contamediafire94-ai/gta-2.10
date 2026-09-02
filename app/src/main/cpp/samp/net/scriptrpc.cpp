@@ -35,7 +35,11 @@ void ScrSetCameraPos(RPCParameters *rpcParams)
 
     CCamera::SetPosition(fX, fY, fZ, 0.0f, 0.0f, 0.0f);
 
-    FLog("ScrSetCameraPos: %.2f %.2f %.2f | refresh streaming", fX, fY, fZ);
+    FLog("ScrSetCameraPos V5: %.2f %.2f %.2f | activeInterior=%u | refresh + load requested models",
+         fX, fY, fZ, (unsigned int)pGame->GetActiveInterior());
+
+    pGame->RefreshStreamingAt(fX, fY);
+    pGame->LoadRequestedModels();
     pGame->RefreshStreamingAt(fX, fY);
 
 	return;
@@ -674,7 +678,20 @@ void ScrSetPlayerInterior(RPCParameters* rpcParams)
 	RakNet::BitStream bsData((unsigned char*)Data, (iBitLength / 8) + 1, false);
 	bsData.Read(byteInteriorId);
 
-	pGame->FindPlayerPed()->m_pPed->SetInterior(byteInteriorId, true);
+    CPlayerPed* pPlayerPed = pGame->FindPlayerPed();
+    if (!pPlayerPed || !pPlayerPed->m_pPed) {
+        FLog("ScrSetPlayerInterior V5: ped unavailable | requested=%u",
+             (unsigned int)byteInteriorId);
+        return;
+    }
+
+    uint8_t oldArea = pGame->GetActiveInterior();
+    pPlayerPed->m_pPed->SetInterior(byteInteriorId, true);
+
+    FLog("ScrSetPlayerInterior V5: requested=%u | activeInterior %u -> %u",
+         (unsigned int)byteInteriorId,
+         (unsigned int)oldArea,
+         (unsigned int)pGame->GetActiveInterior());
 }
 // 0.3.7
 extern UI *pUI;
@@ -1311,8 +1328,12 @@ void ScrSetPlayerPos(RPCParameters* rpcParams)
     else
         pLocalPlayer->GetPlayerPed()->m_pPed->SetPosn(vecPos.x, vecPos.y, vecPos.z);
 
-    FLog("ScrSetPlayerPos: %.2f %.2f %.2f | refresh streaming",
-         vecPos.x, vecPos.y, vecPos.z);
+    FLog("ScrSetPlayerPos V5: %.2f %.2f %.2f | activeInterior=%u | refresh + load requested models",
+         vecPos.x, vecPos.y, vecPos.z,
+         (unsigned int)pGame->GetActiveInterior());
+
+    pGame->RefreshStreamingAt(vecPos.x, vecPos.y);
+    pGame->LoadRequestedModels();
     pGame->RefreshStreamingAt(vecPos.x, vecPos.y);
 }
 // 0.3.7
@@ -1336,6 +1357,14 @@ void ScrSetPlayerPosFindZ(RPCParameters* rpcParams)
 	vecPos.z = pGame->FindGroundZForCoord(vecPos.x, vecPos.y, vecPos.z) + 1.5f;
     pLocalPlayer->DisableSurf();
 	pLocalPlayer->GetPlayerPed()->m_pPed->SetPosn(vecPos.x, vecPos.y, vecPos.z);
+
+    FLog("ScrSetPlayerPosFindZ V5: %.2f %.2f %.2f | activeInterior=%u | refresh + load requested models",
+         vecPos.x, vecPos.y, vecPos.z,
+         (unsigned int)pGame->GetActiveInterior());
+
+    pGame->RefreshStreamingAt(vecPos.x, vecPos.y);
+    pGame->LoadRequestedModels();
+    pGame->RefreshStreamingAt(vecPos.x, vecPos.y);
 }
 // 0.3.7
 void ScrPutPlayerInVehicle(RPCParameters* rpcParams)
