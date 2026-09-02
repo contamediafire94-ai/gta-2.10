@@ -109,6 +109,20 @@ PLAYERID FindActorIDFromGtaPtr(CPedGTA* pPed)
 /* =============================================================================== */
 
 void RenderEffects() {
+    if (pNetGame && pNetGame->GetGameState() == GAMESTATE_CONNECTED)
+    {
+        static bool loggedV12Effects = false;
+        if (!loggedV12Effects)
+        {
+            CCamera& cameraProbe = *reinterpret_cast<CCamera*>(
+                    g_libGTASA + (VER_x32 ? 0x00951FA8 : 0xBBA8D0));
+            FLog("V12: RenderEffects active | rwCamera=%p fading=%d interior=%u",
+                 cameraProbe.m_pRwCamera,
+                 cameraProbe.m_bFading ? 1 : 0,
+                 (unsigned int)pGame->GetActiveInterior());
+            loggedV12Effects = true;
+        }
+    }
 //	RenderEffects();
     //RwRenderStateSet(rwRENDERSTATEZWRITEENABLE, (void*)0);
     //RwRenderStateSet(rwRENDERSTATESRCBLEND, (void*)5);
@@ -217,7 +231,29 @@ void Render2dStuff()
         *(uint8_t*)(g_libGTASA + (VER_x32 ? 0x00819D88 + 1 : 0x009ff3A8)) = 0;
     }*/
 
-    if( CHook::CallFunction<bool>(g_libGTASA + (VER_x32 ? 0x001BB7F4 + 1 : 0x24EA90)) ) // emu_IsAltRenderTarget()
+    bool v12AltRenderTarget =
+            CHook::CallFunction<bool>(g_libGTASA + (VER_x32 ? 0x001BB7F4 + 1 : 0x24EA90)); // emu_IsAltRenderTarget()
+
+    if (pNetGame && pNetGame->GetGameState() == GAMESTATE_CONNECTED)
+    {
+        static bool loggedV12TwoD = false;
+        if (!loggedV12TwoD)
+        {
+            CCamera& cameraProbe = *reinterpret_cast<CCamera*>(
+                    g_libGTASA + (VER_x32 ? 0x00951FA8 : 0xBBA8D0));
+
+            FLog("V12: Render2dStuff active | altRT=%d camera=%p sceneCamera=%p world=%p fading=%d interior=%u",
+                 v12AltRenderTarget ? 1 : 0,
+                 cameraProbe.m_pRwCamera,
+                 Scene.m_pRwCamera,
+                 Scene.m_pRpWorld,
+                 cameraProbe.m_bFading ? 1 : 0,
+                 (unsigned int)pGame->GetActiveInterior());
+            loggedV12TwoD = true;
+        }
+    }
+
+    if (v12AltRenderTarget)
         CHook::CallFunction<void>(g_libGTASA + (VER_x32 ? 0x001BC20C + 1 : 0x24F5B8)); // emu_FlushAltRenderTarget()
 
     RwRenderStateSet(rwRENDERSTATEZTESTENABLE, RWRSTATE(FALSE));
@@ -363,8 +399,24 @@ void CEntity_Render_hook(CEntityGTA* pEntity)
             }
         }
     }
+
     if (pEntity)
+    {
         g_iLastRenderedObject = pEntity->GetModelId();
+
+        if (pNetGame && pNetGame->GetGameState() == GAMESTATE_CONNECTED)
+        {
+            static int v12EntityProbeCount = 0;
+            if (v12EntityProbeCount < 3)
+            {
+                FLog("V12: 3D entity render | model=%d entity=%p rwObject=%p",
+                     pEntity->GetModelId(),
+                     pEntity,
+                     pEntity->m_pRwObject);
+                ++v12EntityProbeCount;
+            }
+        }
+    }
 
     CEntity_Render(pEntity);
 }
@@ -956,6 +1008,23 @@ void CPedDamageResponseCalculator__ComputeDamageResponse_hook(CPedDamageResponse
 void (*CRenderer__RenderEverythingBarRoads)();
 void CRenderer__RenderEverythingBarRoads_hook() {
     if(pNetGame) {
+        if (pNetGame->GetGameState() == GAMESTATE_CONNECTED)
+        {
+            static bool loggedV12Renderer = false;
+            if (!loggedV12Renderer)
+            {
+                CCamera& cameraProbe = *reinterpret_cast<CCamera*>(
+                        g_libGTASA + (VER_x32 ? 0x00951FA8 : 0xBBA8D0));
+                FLog("V12: 3D renderer active | camera=%p sceneCamera=%p world=%p fading=%d interior=%u",
+                     cameraProbe.m_pRwCamera,
+                     Scene.m_pRwCamera,
+                     Scene.m_pRpWorld,
+                     cameraProbe.m_bFading ? 1 : 0,
+                     (unsigned int)pGame->GetActiveInterior());
+                loggedV12Renderer = true;
+            }
+        }
+
         Skybox::Process();
     }
 
@@ -1624,45 +1693,29 @@ if(!strncmp(r1+12, "mainV1.scm", 10))
     }
 }
 
-// V11 DIAGNOSTICO:
- // Evita que a campanha/bootstrap deixe a camera em transicao de fade preta.
- // Diferente do V9, aqui NAO chamamos CCamera::Fade manualmente: interceptamos
- // as chamadas do proprio GTA durante o bootstrap e simplesmente nao criamos
- // esse estado de fade. Quando o V9 tentar a chamada tardia de 0.5s/FADE_IN,
- // ela tambem e ignorada uma unica vez e o guard e liberado.
-static bool g_V11StartupFadeGuard = false;
-static int g_V11SuppressedFadeCalls = 0;
+// V12: keep every normal GTA fade intact.
+// Only neutralize the exact late V9 diagnostic Fade(0.5f, 1) after SA-MP is
+// already connected, because V9 proved that this state makes the next frame
+// fall into SIGBUS. Everything else goes to the original GTA function.
+void (*CCamera__Fade_V12_Original)(CCamera* thiz, float duration, short fadeInOutFlag);
 
-void (*CCamera__Fade_V11_Original)(CCamera* thiz, float duration, short fadeInOutFlag);
-
-void CCamera__Fade_V11_hook(CCamera* thiz, float duration, short fadeInOutFlag)
+void CCamera__Fade_V12_hook(CCamera* thiz, float duration, short fadeInOutFlag)
 {
-    if (g_V11StartupFadeGuard)
+    if (pNetGame &&
+        pNetGame->GetGameState() == GAMESTATE_CONNECTED &&
+        fadeInOutFlag == 1 &&
+        duration >= 0.49f && duration <= 0.51f)
     {
-        ++g_V11SuppressedFadeCalls;
-
-        if (g_V11SuppressedFadeCalls <= 8)
+        static bool logged = false;
+        if (!logged)
         {
-            FLog("V11: suppressed CCamera::Fade during SAMP startup | duration=%.3f flag=%d count=%d",
-                 duration, (int)fadeInOutFlag, g_V11SuppressedFadeCalls);
+            FLog("V12: neutralized late V9 Fade(0.5,1); normal GTA fades remain untouched");
+            logged = true;
         }
-
-        // O game.cpp V9 faz exatamente Fade(0.5f, 1) depois da conexao.
-        // No V9 essa chamada retornava e o frame seguinte caia em SIGBUS.
-        // Ignoramos essa chamada em vez de deixar o motor entrar nesse estado.
-        if (pNetGame &&
-            pNetGame->GetGameState() == GAMESTATE_CONNECTED &&
-            fadeInOutFlag == 1 &&
-            duration >= 0.49f && duration <= 0.51f)
-        {
-            g_V11StartupFadeGuard = false;
-            FLog("V11: late V9 Fade(0.5,1) neutralized; startup fade guard released");
-        }
-
         return;
     }
 
-    CCamera__Fade_V11_Original(thiz, duration, fadeInOutFlag);
+    CCamera__Fade_V12_Original(thiz, duration, fadeInOutFlag);
 }
 
 bool g_bPlaySAMP = false;
@@ -1677,9 +1730,6 @@ void MainMenu_OnStartSAMP()
     // Deixa o GTA concluir a transicao New Game com os scripts normais ativos.
     // O teste anterior mostrou que bloquear os scripts ANTES daqui deixa a camera
     // sem target valido e causa SIGSEGV em CCamera::UpdateTargetEntity.
-    g_V11StartupFadeGuard = true;
-    g_V11SuppressedFadeCalls = 0;
-    FLog("V11: startup fade guard enabled before OnNewGameCheck");
     FLog("WORLD INIT V2: calling OnNewGameCheck with story temporarily allowed");
 
     (( void (*)())(g_libGTASA + (VER_x32 ? 0x002A7270 + 1 : 0x365EA0)))();
@@ -2141,7 +2191,7 @@ void InstallSpecialHooks()
 
 void InstallHooks()
 {
-    CHook::InlineHook("_ZN7CCamera4FadeEfs", &CCamera__Fade_V11_hook, &CCamera__Fade_V11_Original);
+    CHook::InlineHook("_ZN7CCamera4FadeEfs", &CCamera__Fade_V12_hook, &CCamera__Fade_V12_Original);
     CHook::InlineHook("_ZN14CRunningScript7ProcessEv", &CRunningScript__Process_hook, &CRunningScript__Process);
     CHook::Redirect("_Z13Render2dStuffv", &Render2dStuff);
     CHook::Redirect("_Z13RenderEffectsv", &RenderEffects);
