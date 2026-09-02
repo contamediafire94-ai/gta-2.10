@@ -1640,8 +1640,14 @@ void MainMenu_OnStartSAMP()
     //InitInMenu();
     pGame->StartGame();
 
-    // StartGameScreen::OnNewGameCheck() desativado para teste SA-MP
-    // (( void (*)())(g_libGTASA + (VER_x32 ? 0x002A7270 + 1 : 0x365EA0)))();
+    // A campanha precisa ficar bloqueada antes da transicao de "New Game",
+    // mas a transicao em si e importante para o GTA sair do frontend/menu
+    // e concluir a inicializacao do mundo 3D.
+    g_BlockGtaStoryScripts = true;
+    FLog("WORLD INIT: story blocked before OnNewGameCheck");
+
+    (( void (*)())(g_libGTASA + (VER_x32 ? 0x002A7270 + 1 : 0x365EA0)))();
+    FLog("WORLD INIT: OnNewGameCheck returned");
 
     //CHook::InlineHook(g_libGTASA, (VER_x32 ? 0x5A3E40 : , &DoSunAndMoon, &dword_67E048);
 
