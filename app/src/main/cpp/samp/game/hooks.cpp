@@ -420,13 +420,42 @@ void Render2dStuff_V26_hook()
     const unsigned int current = ++seq;
     const bool trace = current <= 16;
 
+    GLint fboBefore = -1;
+    GLint fboAfter = -1;
+    GLint viewport[4] = {0, 0, 0, 0};
+
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &fboBefore);
+    glGetIntegerv(GL_VIEWPORT, viewport);
+
     if (trace)
-        FLog("V26 ORIGINAL 2D BEGIN | seq=%u", current);
+        FLog("V27 FRAMEBUFFER BEFORE | seq=%u fbo=%d viewport=%d,%d,%d,%d",
+             current,
+             (int)fboBefore,
+             (int)viewport[0],
+             (int)viewport[1],
+             (int)viewport[2],
+             (int)viewport[3]);
 
     Render2dStuff_V26_Original();
 
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &fboAfter);
+
     if (trace)
-        FLog("V26 ORIGINAL 2D END | seq=%u", current);
+        FLog("V27 FRAMEBUFFER AFTER ORIGINAL2D | seq=%u fbo=%d",
+             current, (int)fboAfter);
+
+    // TESTE V27:
+    // força o framebuffer padrão (0) a ficar magenta.
+    // Se a tela ficar magenta, o Android/EGL está apresentando normalmente
+    // e o GTA está desenhando em outro framebuffer/target.
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glDisable(GL_SCISSOR_TEST);
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    glClearColor(1.0f, 0.0f, 1.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    if (trace)
+        FLog("V27 DEFAULT FBO MAGENTA CLEAR | seq=%u", current);
 }
 
 /* =============================================================================== */
@@ -2772,7 +2801,7 @@ void InstallHooks()
         }
     }
 
-    FLog("V26 INSTALL: original Render2dStuff + original RenderWater; custom WaterShader bypassed");
+    FLog("V27 INSTALL: default framebuffer magenta presentation probe");
     CHook::InlineHook("_Z17emu_glEndInternalv", (uintptr_t)emu_glEndInternal_hook, (uintptr_t*)&emu_glEndInternal); // V24 diagnostic
 
     CHook::Redirect("_ZN4CHID12GetInputTypeEv", &GetInputType);
