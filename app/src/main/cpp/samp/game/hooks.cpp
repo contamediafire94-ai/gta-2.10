@@ -1,4 +1,5 @@
 #include <GLES2/gl2.h>
+#include <EGL/egl.h>
 #include <errno.h>
 #include <string.h>
 #include "../main.h"
@@ -420,42 +421,89 @@ void Render2dStuff_V26_hook()
     const unsigned int current = ++seq;
     const bool trace = current <= 16;
 
-    GLint fboBefore = -1;
-    GLint fboAfter = -1;
-    GLint viewport[4] = {0, 0, 0, 0};
+    EGLDisplay displayBefore = eglGetCurrentDisplay();
+    EGLContext contextBefore = eglGetCurrentContext();
+    EGLSurface drawBefore = eglGetCurrentSurface(EGL_DRAW);
+    EGLSurface readBefore = eglGetCurrentSurface(EGL_READ);
 
-    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &fboBefore);
-    glGetIntegerv(GL_VIEWPORT, viewport);
+    GLint fboBefore = -1;
+    GLint viewportBefore[4] = {-1, -1, -1, -1};
+    const GLubyte* versionBefore = nullptr;
+
+    GLenum glErr0 = glGetError();
+
+    if (contextBefore != EGL_NO_CONTEXT)
+    {
+        versionBefore = glGetString(GL_VERSION);
+        glGetIntegerv(GL_FRAMEBUFFER_BINDING, &fboBefore);
+        glGetIntegerv(GL_VIEWPORT, viewportBefore);
+    }
+
+    GLenum glErr1 = glGetError();
 
     if (trace)
-        FLog("V27 FRAMEBUFFER BEFORE | seq=%u fbo=%d viewport=%d,%d,%d,%d",
+    {
+        FLog("V28 EGL BEFORE | seq=%u display=%p context=%p draw=%p read=%p glErr0=0x%x glErr1=0x%x",
+             current,
+             (void*)displayBefore,
+             (void*)contextBefore,
+             (void*)drawBefore,
+             (void*)readBefore,
+             (unsigned int)glErr0,
+             (unsigned int)glErr1);
+
+        FLog("V28 GL BEFORE | seq=%u fbo=%d viewport=%d,%d,%d,%d version=%s",
              current,
              (int)fboBefore,
-             (int)viewport[0],
-             (int)viewport[1],
-             (int)viewport[2],
-             (int)viewport[3]);
+             (int)viewportBefore[0],
+             (int)viewportBefore[1],
+             (int)viewportBefore[2],
+             (int)viewportBefore[3],
+             versionBefore ? (const char*)versionBefore : "<null>");
+    }
 
     Render2dStuff_V26_Original();
 
-    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &fboAfter);
+    EGLDisplay displayAfter = eglGetCurrentDisplay();
+    EGLContext contextAfter = eglGetCurrentContext();
+    EGLSurface drawAfter = eglGetCurrentSurface(EGL_DRAW);
+    EGLSurface readAfter = eglGetCurrentSurface(EGL_READ);
+
+    GLint fboAfter = -1;
+    GLint viewportAfter[4] = {-1, -1, -1, -1};
+    const GLubyte* versionAfter = nullptr;
+
+    GLenum glErr2 = glGetError();
+
+    if (contextAfter != EGL_NO_CONTEXT)
+    {
+        versionAfter = glGetString(GL_VERSION);
+        glGetIntegerv(GL_FRAMEBUFFER_BINDING, &fboAfter);
+        glGetIntegerv(GL_VIEWPORT, viewportAfter);
+    }
+
+    GLenum glErr3 = glGetError();
 
     if (trace)
-        FLog("V27 FRAMEBUFFER AFTER ORIGINAL2D | seq=%u fbo=%d",
-             current, (int)fboAfter);
+    {
+        FLog("V28 EGL AFTER | seq=%u display=%p context=%p draw=%p read=%p glErr2=0x%x glErr3=0x%x",
+             current,
+             (void*)displayAfter,
+             (void*)contextAfter,
+             (void*)drawAfter,
+             (void*)readAfter,
+             (unsigned int)glErr2,
+             (unsigned int)glErr3);
 
-    // TESTE V27:
-    // força o framebuffer padrão (0) a ficar magenta.
-    // Se a tela ficar magenta, o Android/EGL está apresentando normalmente
-    // e o GTA está desenhando em outro framebuffer/target.
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    glDisable(GL_SCISSOR_TEST);
-    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
-    glClearColor(1.0f, 0.0f, 1.0f, 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT);
-
-    if (trace)
-        FLog("V27 DEFAULT FBO MAGENTA CLEAR | seq=%u", current);
+        FLog("V28 GL AFTER | seq=%u fbo=%d viewport=%d,%d,%d,%d version=%s",
+             current,
+             (int)fboAfter,
+             (int)viewportAfter[0],
+             (int)viewportAfter[1],
+             (int)viewportAfter[2],
+             (int)viewportAfter[3],
+             versionAfter ? (const char*)versionAfter : "<null>");
+    }
 }
 
 /* =============================================================================== */
@@ -2801,7 +2849,7 @@ void InstallHooks()
         }
     }
 
-    FLog("V27 INSTALL: default framebuffer magenta presentation probe");
+    FLog("V28 INSTALL: EGL current-context and surface probe");
     CHook::InlineHook("_Z17emu_glEndInternalv", (uintptr_t)emu_glEndInternal_hook, (uintptr_t*)&emu_glEndInternal); // V24 diagnostic
 
     CHook::Redirect("_ZN4CHID12GetInputTypeEv", &GetInputType);
