@@ -400,46 +400,41 @@ void CEntity_Render_hook(CEntityGTA* pEntity)
         }
     }
 
+    // V18 DIAGNOSTICO DE RENDER:
+    // A V17 provou que o modelo 1268 nao e a causa unica do SIGBUS:
+    // mesmo pulando 1268, o crash continuou logo depois no pipeline 3D.
+    //
+    // Nesta versao NAO pulamos nenhum model ID. Em vez disso, registramos
+    // cada entrada e cada retorno de CEntity::Render. O ultimo "BEGIN" sem
+    // um "END" correspondente mostra exatamente qual entidade/modelo entrou
+    // em CEntity::Render e provocou o SIGBUS.
+    static unsigned int v18RenderSequence = 0;
+    const unsigned int renderSequence = ++v18RenderSequence;
+    int modelId = -1;
+
     if (pEntity)
     {
-        const int modelId = pEntity->GetModelId();
-
-        // V17 DIAGNOSTICO:
-        // O V16 confirmou que o fade 255/status 2 estava bloqueando o render.
-        // Assim que o render 3D foi liberado, o primeiro SIGBUS voltou sempre
-        // no mesmo ponto, logo apos entrar no modelo 1268.
-        //
-        // Pulamos SOMENTE esse modelo para confirmar se ele e o gatilho
-        // especifico do crash ou apenas o primeiro objeto atingido por um
-        // problema mais amplo do pipeline.
-        if (modelId == 1268)
-        {
-            static bool loggedV17Skip1268 = false;
-            if (!loggedV17Skip1268)
-            {
-                FLog("V17: skipping GTA model 1268 before CEntity::Render for SIGBUS isolation");
-                loggedV17Skip1268 = true;
-            }
-            return;
-        }
-
+        modelId = pEntity->GetModelId();
         g_iLastRenderedObject = modelId;
 
-        if (pNetGame && pNetGame->GetGameState() == GAMESTATE_CONNECTED)
-        {
-            static int v12EntityProbeCount = 0;
-            if (v12EntityProbeCount < 6)
-            {
-                FLog("V17: 3D entity render | model=%d entity=%p rwObject=%p",
-                     modelId,
-                     pEntity,
-                     pEntity->m_pRwObject);
-                ++v12EntityProbeCount;
-            }
-        }
+        FLog("V18 RENDER BEGIN | seq=%u model=%d entity=%p rwObject=%p",
+             renderSequence,
+             modelId,
+             pEntity,
+             pEntity->m_pRwObject);
+    }
+    else
+    {
+        FLog("V18 RENDER BEGIN | seq=%u model=-1 entity=null rwObject=null",
+             renderSequence);
     }
 
     CEntity_Render(pEntity);
+
+    FLog("V18 RENDER END | seq=%u model=%d entity=%p",
+         renderSequence,
+         modelId,
+         pEntity);
 }
 
 /* =============================================================================== */
