@@ -447,6 +447,59 @@ void CEntity_Render_hook(CEntityGTA* pEntity)
 // SetupLighting -> Render -> RemoveLighting / limpeza de render-state.
 // =============================================================================
 
+// =============================================================================
+// V20 DIAGNOSTICO DA LISTA VISIVEL
+//
+// A V19 mostrou que RenderOneNonRoad(), SetupLighting(), CEntity::Render() e
+// RemoveLighting() retornam normalmente para o model 1268. O SIGBUS acontece
+// logo APOS RenderOneNonRoad() devolver o controle para
+// CRenderer::RenderEverythingBarRoads().
+//
+// Agora registramos o indice da entidade dentro de ms_aVisibleEntityPtrs,
+// a quantidade de entidades visiveis e o ponteiro cru do proximo slot. Assim
+// descobrimos se o renderer cai ao avancar para a proxima entrada da lista.
+// Os offsets abaixo foram confirmados na libGTASA das duas ABIs deste projeto.
+// =============================================================================
+
+static inline int V20GetVisibleCount()
+{
+    const uintptr_t offset = VER_x32 ? 0x00960B64 : 0x00BCF8E4;
+    return *reinterpret_cast<volatile int*>(g_libGTASA + offset);
+}
+
+static inline CEntityGTA** V20GetVisibleArray()
+{
+    const uintptr_t offset = VER_x32 ? 0x00960B80 : 0x00BCF900;
+    return reinterpret_cast<CEntityGTA**>(g_libGTASA + offset);
+}
+
+static inline int V20FindVisibleIndex(CEntityGTA* entity)
+{
+    if (!entity)
+        return -1;
+
+    const int count = V20GetVisibleCount();
+    if (count < 0 || count > 1000)
+        return -2;
+
+    CEntityGTA** list = V20GetVisibleArray();
+    for (int i = 0; i < count; ++i)
+    {
+        if (list[i] == entity)
+            return i;
+    }
+    return -1;
+}
+
+static inline CEntityGTA* V20GetVisibleRaw(int index)
+{
+    const int count = V20GetVisibleCount();
+    if (index < 0 || count < 0 || count > 1000 || index >= count)
+        return nullptr;
+
+    return V20GetVisibleArray()[index];
+}
+
 static inline int V19GetModelId(CEntityGTA* entity)
 {
     return entity ? entity->GetModelId() : -1;
@@ -458,19 +511,28 @@ void CRenderer__RenderOneNonRoad_hook(CEntityGTA* pEntity)
     static unsigned int seq = 0;
     const unsigned int current = ++seq;
     const int modelId = V19GetModelId(pEntity);
+    const int visibleCount = V20GetVisibleCount();
+    const int visibleIndex = V20FindVisibleIndex(pEntity);
+    CEntityGTA* nextRaw = V20GetVisibleRaw(visibleIndex + 1);
 
-    FLog("V19 NONROAD BEGIN | seq=%u model=%d entity=%p rwObject=%p",
+    FLog("V20 NONROAD BEGIN | seq=%u model=%d entity=%p rwObject=%p visIndex=%d visCount=%d nextRaw=%p",
          current,
          modelId,
          pEntity,
-         pEntity ? pEntity->m_pRwObject : nullptr);
+         pEntity ? pEntity->m_pRwObject : nullptr,
+         visibleIndex,
+         visibleCount,
+         nextRaw);
 
     CRenderer__RenderOneNonRoad(pEntity);
 
-    FLog("V19 NONROAD END | seq=%u model=%d entity=%p",
+    FLog("V20 NONROAD END | seq=%u model=%d entity=%p visIndex=%d visCount=%d nextRaw=%p",
          current,
          modelId,
-         pEntity);
+         pEntity,
+         visibleIndex,
+         visibleCount,
+         nextRaw);
 }
 
 bool (*CEntity__SetupLighting)(CEntityGTA* thiz);
@@ -1149,6 +1211,10 @@ void CPedDamageResponseCalculator__ComputeDamageResponse_hook(CPedDamageResponse
 
 void (*CRenderer__RenderEverythingBarRoads)();
 void CRenderer__RenderEverythingBarRoads_hook() {
+    static unsigned int v20BarRoadsSeq = 0;
+    unsigned int currentBarSeq = 0;
+    bool v20TraceThisCall = false;
+
     if(pNetGame) {
         if (pNetGame->GetGameState() == GAMESTATE_CONNECTED)
         {
@@ -1165,12 +1231,43 @@ void CRenderer__RenderEverythingBarRoads_hook() {
                      (unsigned int)pGame->GetActiveInterior());
                 loggedV12Renderer = true;
             }
+
+            currentBarSeq = ++v20BarRoadsSeq;
+            v20TraceThisCall = currentBarSeq <= 12;
+            if (v20TraceThisCall)
+            {
+                const int visibleCount = V20GetVisibleCount();
+                FLog("V20 BARROADS BEGIN | seq=%u visCount=%d visibleArray=%p",
+                     currentBarSeq,
+                     visibleCount,
+                     V20GetVisibleArray());
+
+                if (visibleCount >= 0 && visibleCount <= 1000)
+                {
+                    const int dumpCount = visibleCount < 16 ? visibleCount : 16;
+                    CEntityGTA** list = V20GetVisibleArray();
+                    for (int i = 0; i < dumpCount; ++i)
+                    {
+                        FLog("V20 VIS SLOT | barSeq=%u idx=%d raw=%p",
+                             currentBarSeq,
+                             i,
+                             list[i]);
+                    }
+                }
+            }
         }
 
         Skybox::Process();
     }
 
     CRenderer__RenderEverythingBarRoads();
+
+    if (v20TraceThisCall)
+    {
+        FLog("V20 BARROADS END | seq=%u visCountNow=%d",
+             currentBarSeq,
+             V20GetVisibleCount());
+    }
 }
 
 #include "CFPSFix.h"
@@ -2431,7 +2528,7 @@ void InstallHooks()
     ms_fAspectRatio = (float*)(g_libGTASA+(VER_x32 ? 0xA26A90:0xCC7F00));
     CHook::InlineHook("_ZN4CHud14DrawCrossHairsEv", &DrawCrosshair_hook, &DrawCrosshair);
 
-    // V19: isolate crash after CEntity::Render inside CRenderer::RenderOneNonRoad
+    // V20: trace visible-list index/raw next slot around CRenderer::RenderOneNonRoad
     CHook::InlineHook("_ZN9CRenderer16RenderOneNonRoadEP7CEntity",
                       &CRenderer__RenderOneNonRoad_hook,
                       &CRenderer__RenderOneNonRoad);
