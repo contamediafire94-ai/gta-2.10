@@ -437,6 +437,132 @@ void CEntity_Render_hook(CEntityGTA* pEntity)
          pEntity);
 }
 
+
+// =============================================================================
+// V19 DIAGNOSTICO POS-CEntity::Render
+//
+// A V18 confirmou que CEntity::Render() retorna normalmente para os primeiros
+// objetos (incluindo o model 1268) e o SIGBUS acontece DEPOIS. O objetivo da
+// V19 e isolar o trecho exato dentro de CRenderer::RenderOneNonRoad():
+// SetupLighting -> Render -> RemoveLighting / limpeza de render-state.
+// =============================================================================
+
+static inline int V19GetModelId(CEntityGTA* entity)
+{
+    return entity ? entity->GetModelId() : -1;
+}
+
+void (*CRenderer__RenderOneNonRoad)(CEntityGTA* pEntity);
+void CRenderer__RenderOneNonRoad_hook(CEntityGTA* pEntity)
+{
+    static unsigned int seq = 0;
+    const unsigned int current = ++seq;
+    const int modelId = V19GetModelId(pEntity);
+
+    FLog("V19 NONROAD BEGIN | seq=%u model=%d entity=%p rwObject=%p",
+         current,
+         modelId,
+         pEntity,
+         pEntity ? pEntity->m_pRwObject : nullptr);
+
+    CRenderer__RenderOneNonRoad(pEntity);
+
+    FLog("V19 NONROAD END | seq=%u model=%d entity=%p",
+         current,
+         modelId,
+         pEntity);
+}
+
+bool (*CEntity__SetupLighting)(CEntityGTA* thiz);
+bool CEntity__SetupLighting_hook(CEntityGTA* thiz)
+{
+    const int modelId = V19GetModelId(thiz);
+    FLog("V19 ENTITY LIGHT SETUP BEGIN | model=%d entity=%p", modelId, thiz);
+    const bool result = CEntity__SetupLighting(thiz);
+    FLog("V19 ENTITY LIGHT SETUP END | model=%d entity=%p result=%d",
+         modelId, thiz, result ? 1 : 0);
+    return result;
+}
+
+void (*CEntity__RemoveLighting)(CEntityGTA* thiz, bool setupResult);
+void CEntity__RemoveLighting_hook(CEntityGTA* thiz, bool setupResult)
+{
+    const int modelId = V19GetModelId(thiz);
+    FLog("V19 ENTITY LIGHT REMOVE BEGIN | model=%d entity=%p setup=%d",
+         modelId, thiz, setupResult ? 1 : 0);
+    CEntity__RemoveLighting(thiz, setupResult);
+    FLog("V19 ENTITY LIGHT REMOVE END | model=%d entity=%p", modelId, thiz);
+}
+
+bool (*CObject__SetupLighting)(CObjectGta* thiz);
+bool CObject__SetupLighting_hook(CObjectGta* thiz)
+{
+    CEntityGTA* entity = reinterpret_cast<CEntityGTA*>(thiz);
+    const int modelId = V19GetModelId(entity);
+    FLog("V19 OBJECT LIGHT SETUP BEGIN | model=%d object=%p", modelId, thiz);
+    const bool result = CObject__SetupLighting(thiz);
+    FLog("V19 OBJECT LIGHT SETUP END | model=%d object=%p result=%d",
+         modelId, thiz, result ? 1 : 0);
+    return result;
+}
+
+void (*CObject__RemoveLighting)(CObjectGta* thiz, bool setupResult);
+void CObject__RemoveLighting_hook(CObjectGta* thiz, bool setupResult)
+{
+    CEntityGTA* entity = reinterpret_cast<CEntityGTA*>(thiz);
+    const int modelId = V19GetModelId(entity);
+    FLog("V19 OBJECT LIGHT REMOVE BEGIN | model=%d object=%p setup=%d",
+         modelId, thiz, setupResult ? 1 : 0);
+    CObject__RemoveLighting(thiz, setupResult);
+    FLog("V19 OBJECT LIGHT REMOVE END | model=%d object=%p", modelId, thiz);
+}
+
+bool (*CPed__SetupLighting)(CPedGTA* thiz);
+bool CPed__SetupLighting_hook(CPedGTA* thiz)
+{
+    CEntityGTA* entity = reinterpret_cast<CEntityGTA*>(thiz);
+    const int modelId = V19GetModelId(entity);
+    FLog("V19 PED LIGHT SETUP BEGIN | model=%d ped=%p", modelId, thiz);
+    const bool result = CPed__SetupLighting(thiz);
+    FLog("V19 PED LIGHT SETUP END | model=%d ped=%p result=%d",
+         modelId, thiz, result ? 1 : 0);
+    return result;
+}
+
+void (*CPed__RemoveLighting)(CPedGTA* thiz, bool setupResult);
+void CPed__RemoveLighting_hook(CPedGTA* thiz, bool setupResult)
+{
+    CEntityGTA* entity = reinterpret_cast<CEntityGTA*>(thiz);
+    const int modelId = V19GetModelId(entity);
+    FLog("V19 PED LIGHT REMOVE BEGIN | model=%d ped=%p setup=%d",
+         modelId, thiz, setupResult ? 1 : 0);
+    CPed__RemoveLighting(thiz, setupResult);
+    FLog("V19 PED LIGHT REMOVE END | model=%d ped=%p", modelId, thiz);
+}
+
+bool (*CVehicle__SetupLighting)(CVehicleGTA* thiz);
+bool CVehicle__SetupLighting_hook(CVehicleGTA* thiz)
+{
+    CEntityGTA* entity = reinterpret_cast<CEntityGTA*>(thiz);
+    const int modelId = V19GetModelId(entity);
+    FLog("V19 VEHICLE LIGHT SETUP BEGIN | model=%d vehicle=%p", modelId, thiz);
+    const bool result = CVehicle__SetupLighting(thiz);
+    FLog("V19 VEHICLE LIGHT SETUP END | model=%d vehicle=%p result=%d",
+         modelId, thiz, result ? 1 : 0);
+    return result;
+}
+
+void (*CVehicle__RemoveLighting)(CVehicleGTA* thiz, bool setupResult);
+void CVehicle__RemoveLighting_hook(CVehicleGTA* thiz, bool setupResult)
+{
+    CEntityGTA* entity = reinterpret_cast<CEntityGTA*>(thiz);
+    const int modelId = V19GetModelId(entity);
+    FLog("V19 VEHICLE LIGHT REMOVE BEGIN | model=%d vehicle=%p setup=%d",
+         modelId, thiz, setupResult ? 1 : 0);
+    CVehicle__RemoveLighting(thiz, setupResult);
+    FLog("V19 VEHICLE LIGHT REMOVE END | model=%d vehicle=%p", modelId, thiz);
+}
+
 /* =============================================================================== */
 
 /* =============================================================================== */
@@ -2304,6 +2430,39 @@ void InstallHooks()
 
     ms_fAspectRatio = (float*)(g_libGTASA+(VER_x32 ? 0xA26A90:0xCC7F00));
     CHook::InlineHook("_ZN4CHud14DrawCrossHairsEv", &DrawCrosshair_hook, &DrawCrosshair);
+
+    // V19: isolate crash after CEntity::Render inside CRenderer::RenderOneNonRoad
+    CHook::InlineHook("_ZN9CRenderer16RenderOneNonRoadEP7CEntity",
+                      &CRenderer__RenderOneNonRoad_hook,
+                      &CRenderer__RenderOneNonRoad);
+
+    CHook::InlineHook("_ZN7CEntity13SetupLightingEv",
+                      &CEntity__SetupLighting_hook,
+                      &CEntity__SetupLighting);
+    CHook::InlineHook("_ZN7CEntity14RemoveLightingEb",
+                      &CEntity__RemoveLighting_hook,
+                      &CEntity__RemoveLighting);
+
+    CHook::InlineHook("_ZN7CObject13SetupLightingEv",
+                      &CObject__SetupLighting_hook,
+                      &CObject__SetupLighting);
+    CHook::InlineHook("_ZN7CObject14RemoveLightingEb",
+                      &CObject__RemoveLighting_hook,
+                      &CObject__RemoveLighting);
+
+    CHook::InlineHook("_ZN4CPed13SetupLightingEv",
+                      &CPed__SetupLighting_hook,
+                      &CPed__SetupLighting);
+    CHook::InlineHook("_ZN4CPed14RemoveLightingEb",
+                      &CPed__RemoveLighting_hook,
+                      &CPed__RemoveLighting);
+
+    CHook::InlineHook("_ZN8CVehicle13SetupLightingEv",
+                      &CVehicle__SetupLighting_hook,
+                      &CVehicle__SetupLighting);
+    CHook::InlineHook("_ZN8CVehicle14RemoveLightingEb",
+                      &CVehicle__RemoveLighting_hook,
+                      &CVehicle__RemoveLighting);
 
     // retexture
     CHook::InlineHook("_ZN7CEntity6RenderEv", &CEntity_Render_hook, &CEntity_Render);
