@@ -401,6 +401,34 @@ void Render2dStuff()
         FLog("V21 2D END | seq=%u", v21TwoDCurrent);
 }
 
+// =============================================================================
+// V26 DIAGNOSTICO DA TELA PRETA
+//
+// V25 provou que o 3D, RenderWater, fading e emu_glEndInternal continuam
+// executando sem crash, mas a imagem final permanece preta.
+//
+// Esta versao NAO substitui mais Render2dStuff() inteiro por nossa copia
+// manual. Em vez disso, chama o Render2dStuff ORIGINAL do GTA por trampoline.
+// TextDraw/UI customizados ficam temporariamente fora deste teste para
+// descobrirmos se o framebuffer original volta a aparecer na tela.
+// =============================================================================
+void (*Render2dStuff_V26_Original)();
+
+void Render2dStuff_V26_hook()
+{
+    static unsigned int seq = 0;
+    const unsigned int current = ++seq;
+    const bool trace = current <= 16;
+
+    if (trace)
+        FLog("V26 ORIGINAL 2D BEGIN | seq=%u", current);
+
+    Render2dStuff_V26_Original();
+
+    if (trace)
+        FLog("V26 ORIGINAL 2D END | seq=%u", current);
+}
+
 /* =============================================================================== */
 
 int (*CRadar__SetCoordBlip)(int r0, float X, float Y, float Z, int r4, int r5, char* name);
@@ -2689,7 +2717,10 @@ void InstallHooks()
 {
     CHook::InlineHook("_ZN7CCamera4FadeEfs", &CCamera__Fade_V12_hook, &CCamera__Fade_V12_Original);
     CHook::InlineHook("_ZN14CRunningScript7ProcessEv", &CRunningScript__Process_hook, &CRunningScript__Process);
-    CHook::Redirect("_Z13Render2dStuffv", &Render2dStuff);
+    // V26: usar o Render2dStuff original do GTA para isolar a tela preta.
+    CHook::InlineHook("_Z13Render2dStuffv",
+                      &Render2dStuff_V26_hook,
+                      &Render2dStuff_V26_Original);
     CHook::Redirect("_Z13RenderEffectsv", &RenderEffects);
     CHook::InlineHook("_Z14AND_TouchEventiiii", &AND_TouchEvent_hook, &AND_TouchEvent);
 	
@@ -2741,7 +2772,7 @@ void InstallHooks()
         }
     }
 
-    FLog("V25 INSTALL: original RenderWater restored; custom WaterShader still bypassed");
+    FLog("V26 INSTALL: original Render2dStuff + original RenderWater; custom WaterShader bypassed");
     CHook::InlineHook("_Z17emu_glEndInternalv", (uintptr_t)emu_glEndInternal_hook, (uintptr_t*)&emu_glEndInternal); // V24 diagnostic
 
     CHook::Redirect("_ZN4CHID12GetInputTypeEv", &GetInputType);
