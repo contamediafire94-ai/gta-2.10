@@ -109,6 +109,12 @@ PLAYERID FindActorIDFromGtaPtr(CPedGTA* pPed)
 /* =============================================================================== */
 
 void RenderEffects() {
+    static unsigned int v21EffectsSeq = 0;
+    const unsigned int v21EffectsCurrent = ++v21EffectsSeq;
+    const bool v21TraceEffects = v21EffectsCurrent <= 8;
+    if (v21TraceEffects)
+        FLog("V21 EFFECTS BEGIN | seq=%u", v21EffectsCurrent);
+
     if (pNetGame && pNetGame->GetGameState() == GAMESTATE_CONNECTED)
     {
         static bool loggedV12Effects = false;
@@ -168,6 +174,8 @@ void RenderEffects() {
     CHook::CallFunction<void>(g_libGTASA + (VER_x32 ? 0x005B5F78 + 1 : 0x6DA2B8));
 
     //DebugModules::Render3D();
+    if (v21TraceEffects)
+        FLog("V21 EFFECTS END | seq=%u", v21EffectsCurrent);
 }
 
 /*void MainLoop();
@@ -186,53 +194,109 @@ void Render2dStuff_hook()
 
 void ShowHud()
 {
-    CLocalPlayer *pLocalPlayer = pNetGame->GetPlayerPool()->GetLocalPlayer();
-    CPlayerPed *pPed = pGame->FindPlayerPed();
-    if(pGame)
+    static unsigned int v21HudSeq = 0;
+    const unsigned int v21HudCurrent = ++v21HudSeq;
+    const bool v21TraceHud = v21HudCurrent <= 8;
+
+    if (v21TraceHud)
+        FLog("V21 SHOWHUD BEGIN | seq=%u pNetGame=%p pGame=%p java=%p",
+             v21HudCurrent, pNetGame, pGame, pJavaWrapper);
+
+    CLocalPlayer *pLocalPlayer = nullptr;
+    CPlayerPed *pPed = nullptr;
+    CPlayerPool *pPlayerPool = nullptr;
+
+    if (pNetGame)
     {
-        if(pNetGame/* && pLocalPlayer->lToggle*/)
+        pPlayerPool = pNetGame->GetPlayerPool();
+        if (pPlayerPool)
+            pLocalPlayer = pPlayerPool->GetLocalPlayer();
+    }
+    if (pGame)
+        pPed = pGame->FindPlayerPed();
+
+    if (v21TraceHud)
+        FLog("V21 SHOWHUD PTRS | seq=%u pool=%p local=%p ped=%p gtaPed=%p",
+             v21HudCurrent, pPlayerPool, pLocalPlayer, pPed, GamePool_FindPlayerPed());
+
+    if(pGame && pNetGame)
+    {
+        if(pGame->FindPlayerPed() || GamePool_FindPlayerPed())
         {
-            if(pGame->FindPlayerPed() || GamePool_FindPlayerPed())
+            if (v21TraceHud)
+                FLog("V21 SHOWHUD WEAPON BEGIN | seq=%u ped=%p", v21HudCurrent, pPed);
+
+            CWeapon *pWeapon = pPed ? pPed->GetCurrentWeaponSlot() : nullptr;
+
+            if (v21TraceHud)
+                FLog("V21 SHOWHUD WEAPON END | seq=%u weapon=%p", v21HudCurrent, pWeapon);
+
+            if(pPlayerPool && pPed && pWeapon && pJavaWrapper)
             {
-                CPlayerPool *pPlayerPool = pNetGame->GetPlayerPool();
-                CWeapon *pWeapon = pPed->GetCurrentWeaponSlot();
-                if(pPlayerPool)
-                {
-                    pJavaWrapper->UpdateHudInfo(
-                            pGame->FindPlayerPed()->GetHealth(),
-                            pGame->FindPlayerPed()->GetArmour(),
-                            pWeapon->dwType,
-                            pWeapon->dwAmmoInClip,
-                            pWeapon->dwAmmo,
-                            pGame->GetLocalMoney(),
-                            pGame->GetWantedLevel()
-                    );
-                }
-                *(uint8_t*)(g_libGTASA + (VER_x32 ? 0x00819D88 + 1 : 0x009ff3A8)) = 0;
+                if (v21TraceHud)
+                    FLog("V21 SHOWHUD JAVA BEGIN | seq=%u", v21HudCurrent);
+
+                pJavaWrapper->UpdateHudInfo(
+                        pGame->FindPlayerPed()->GetHealth(),
+                        pGame->FindPlayerPed()->GetArmour(),
+                        pWeapon->dwType,
+                        pWeapon->dwAmmoInClip,
+                        pWeapon->dwAmmo,
+                        pGame->GetLocalMoney(),
+                        pGame->GetWantedLevel()
+                );
+
+                if (v21TraceHud)
+                    FLog("V21 SHOWHUD JAVA END | seq=%u", v21HudCurrent);
             }
+
+            const uintptr_t hudFlagAddress =
+                    g_libGTASA + (VER_x32 ? 0x00819D88 + 1 : 0x009ff3A8);
+
+            if (v21TraceHud)
+                FLog("V21 SHOWHUD FLAGWRITE BEGIN | seq=%u addr=%p x32=%d",
+                     v21HudCurrent, (void*)hudFlagAddress, VER_x32 ? 1 : 0);
+
+            *(uint8_t*)hudFlagAddress = 0;
+
+            if (v21TraceHud)
+                FLog("V21 SHOWHUD FLAGWRITE END | seq=%u", v21HudCurrent);
         }
     }
+
+    if (v21TraceHud)
+        FLog("V21 SHOWHUD END | seq=%u", v21HudCurrent);
 }
 
 #include "CSkyBox.h"
 //extern CJavaWrapper* pJavaWrapper;
 void Render2dStuff()
 {
-    //CSkyBox::Process();
+    static unsigned int v21TwoDSeq = 0;
+    const unsigned int v21TwoDCurrent = ++v21TwoDSeq;
+    const bool v21TraceTwoD = v21TwoDCurrent <= 8;
 
+    if (v21TraceTwoD)
+        FLog("V21 2D BEGIN | seq=%u", v21TwoDCurrent);
+
+    if (v21TraceTwoD)
+        FLog("V21 2D SHOWHUD CALL BEGIN | seq=%u", v21TwoDCurrent);
     ShowHud();
+    if (v21TraceTwoD)
+        FLog("V21 2D SHOWHUD CALL END | seq=%u", v21TwoDCurrent);
 
-    /*if (pSettings && pSettings->Get().iHud)
-    {
-        *(uint8_t*)(g_libGTASA + (VER_x32 ? 0x00819D88 + 1 : 0x009ff3A8)) = 1;
-    }
-    else if (pSettings && !pSettings->Get().iHud)
-    {
-        *(uint8_t*)(g_libGTASA + (VER_x32 ? 0x00819D88 + 1 : 0x009ff3A8)) = 0;
-    }*/
+    const uintptr_t v21AltTestTarget =
+            g_libGTASA + (VER_x32 ? 0x001BB7F4 + 1 : 0x24EA90);
 
-    bool v12AltRenderTarget =
-            CHook::CallFunction<bool>(g_libGTASA + (VER_x32 ? 0x001BB7F4 + 1 : 0x24EA90)); // emu_IsAltRenderTarget()
+    if (v21TraceTwoD)
+        FLog("V21 2D ALTTEST BEGIN | seq=%u target=%p x32=%d",
+             v21TwoDCurrent, (void*)v21AltTestTarget, VER_x32 ? 1 : 0);
+
+    bool v12AltRenderTarget = CHook::CallFunction<bool>(v21AltTestTarget);
+
+    if (v21TraceTwoD)
+        FLog("V21 2D ALTTEST END | seq=%u altRT=%d",
+             v21TwoDCurrent, v12AltRenderTarget ? 1 : 0);
 
     if (pNetGame && pNetGame->GetGameState() == GAMESTATE_CONNECTED)
     {
@@ -254,7 +318,19 @@ void Render2dStuff()
     }
 
     if (v12AltRenderTarget)
-        CHook::CallFunction<void>(g_libGTASA + (VER_x32 ? 0x001BC20C + 1 : 0x24F5B8)); // emu_FlushAltRenderTarget()
+    {
+        const uintptr_t v21AltFlushTarget =
+                g_libGTASA + (VER_x32 ? 0x001BC20C + 1 : 0x24F5B8);
+        if (v21TraceTwoD)
+            FLog("V21 2D ALTFLUSH BEGIN | seq=%u target=%p",
+                 v21TwoDCurrent, (void*)v21AltFlushTarget);
+        CHook::CallFunction<void>(v21AltFlushTarget);
+        if (v21TraceTwoD)
+            FLog("V21 2D ALTFLUSH END | seq=%u", v21TwoDCurrent);
+    }
+
+    if (v21TraceTwoD)
+        FLog("V21 2D STATES BEGIN | seq=%u", v21TwoDCurrent);
 
     RwRenderStateSet(rwRENDERSTATEZTESTENABLE, RWRSTATE(FALSE));
     RwRenderStateSet(rwRENDERSTATEZWRITEENABLE, RWRSTATE(FALSE));
@@ -264,28 +340,65 @@ void Render2dStuff()
     RwRenderStateSet(rwRENDERSTATEFOGENABLE, RWRSTATE(rwRENDERSTATENARENDERSTATE));
     RwRenderStateSet(rwRENDERSTATECULLMODE, RWRSTATE(rwCULLMODECULLNONE));
 
-    //((void (*)()) (g_libGTASA + (VER_x32 ? 0x00437B0C + 1 : 0x51CFF0)))(); // CHud::DrawRadar
-    //CHook::CallFunction<void>("_ZN4CHud14DrawScriptTextEh", true);
+    if (v21TraceTwoD)
+        FLog("V21 2D STATES END | seq=%u", v21TwoDCurrent);
+
+    if (v21TraceTwoD)
+        FLog("V21 2D HUDDRAW BEGIN | seq=%u", v21TwoDCurrent);
     CHook::CallFunction<void>("_ZN4CHud4DrawEv");
-    //	GPS::Draw();
-    //
-    ((void(*)(bool) )(g_libGTASA + (VER_x32 ? 0x002B0BD8 + 1 : 0x36FB00)) )(false); // CTouchInterface::DrawAll
+    if (v21TraceTwoD)
+        FLog("V21 2D HUDDRAW END | seq=%u", v21TwoDCurrent);
 
+    if (v21TraceTwoD)
+        FLog("V21 2D TOUCHDRAW1 BEGIN | seq=%u", v21TwoDCurrent);
+    ((void(*)(bool) )(g_libGTASA + (VER_x32 ? 0x002B0BD8 + 1 : 0x36FB00)) )(false);
+    if (v21TraceTwoD)
+        FLog("V21 2D TOUCHDRAW1 END | seq=%u", v21TwoDCurrent);
+
+    if (v21TraceTwoD)
+        FLog("V21 2D GAMMA1 BEGIN | seq=%u", v21TwoDCurrent);
     CHook::CallFunction<void>("_Z12emu_GammaSeth", 1);
+    if (v21TraceTwoD)
+        FLog("V21 2D GAMMA1 END | seq=%u", v21TwoDCurrent);
 
-    ((void (*)(bool)) (g_libGTASA + (VER_x32 ? 0x0054BDD4 + 1 : 0x66B678)))(1u); // CMessages::Display - gametext
-    ((void (*)(bool)) (g_libGTASA + (VER_x32 ? 0x005A9120 + 1 : 0x6CCEA0)))(1u); // CFont::RenderFontBuffer
+    if (v21TraceTwoD)
+        FLog("V21 2D MESSAGES BEGIN | seq=%u", v21TwoDCurrent);
+    ((void (*)(bool)) (g_libGTASA + (VER_x32 ? 0x0054BDD4 + 1 : 0x66B678)))(1u);
+    if (v21TraceTwoD)
+        FLog("V21 2D MESSAGES END | seq=%u", v21TwoDCurrent);
+
+    if (v21TraceTwoD)
+        FLog("V21 2D FONT BEGIN | seq=%u", v21TwoDCurrent);
+    ((void (*)(bool)) (g_libGTASA + (VER_x32 ? 0x005A9120 + 1 : 0x6CCEA0)))(1u);
+    if (v21TraceTwoD)
+        FLog("V21 2D FONT END | seq=%u", v21TwoDCurrent);
+
     CHook::CallFunction<void>("_Z12emu_GammaSeth", 0);
 
     if(pNetGame)
     {
+        if (v21TraceTwoD)
+            FLog("V21 2D TEXTDRAW BEGIN | seq=%u", v21TwoDCurrent);
         CTextDrawPool* pTextDrawPool = pNetGame->GetTextDrawPool();
         if(pTextDrawPool) pTextDrawPool->Draw();
+        if (v21TraceTwoD)
+            FLog("V21 2D TEXTDRAW END | seq=%u", v21TwoDCurrent);
     }
 
+    if (v21TraceTwoD)
+        FLog("V21 2D TOUCHDRAW2 BEGIN | seq=%u", v21TwoDCurrent);
     CHook::CallFunction<void>("_ZN15CTouchInterface7DrawAllEb", false);
+    if (v21TraceTwoD)
+        FLog("V21 2D TOUCHDRAW2 END | seq=%u", v21TwoDCurrent);
 
+    if (v21TraceTwoD)
+        FLog("V21 2D UI BEGIN | seq=%u ui=%p", v21TwoDCurrent, pUI);
     if (pUI) pUI->render();
+    if (v21TraceTwoD)
+        FLog("V21 2D UI END | seq=%u", v21TwoDCurrent);
+
+    if (v21TraceTwoD)
+        FLog("V21 2D END | seq=%u", v21TwoDCurrent);
 }
 
 /* =============================================================================== */
