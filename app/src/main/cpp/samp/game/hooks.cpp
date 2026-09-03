@@ -1383,6 +1383,46 @@ void CRenderer__RenderEverythingBarRoads_hook() {
     }
 }
 
+// =============================================================================
+// V22 DIAGNOSTICO POS-BARROADS
+//
+// A V20 confirmou que RenderEverythingBarRoads() retorna normalmente.
+// O crash acontece logo depois. No RenderScene original, os próximos passos
+// incluem BreakManager_c::Render(false), RenderFadingInUnderwaterEntities()
+// e RenderFadingInEntities().
+//
+// Como ainda não temos o símbolo/offset do BreakManager::Render confirmado
+// nesta build Android, não vamos inventar endereço. Em vez disso, marcamos
+// as duas funções CRenderer exportadas seguintes. Assim:
+// - se nenhum BEGIN aparecer após "V20 BARROADS END", o crash ocorreu antes
+//   delas (forte candidato: BreakManager_c::Render(false));
+// - se aparecer BEGIN sem END, achamos a função exata;
+// - se ambas retornarem, seguimos para o próximo estágio do RenderScene.
+// =============================================================================
+
+void (*CRenderer__RenderFadingInUnderwaterEntities)();
+void CRenderer__RenderFadingInUnderwaterEntities_hook()
+{
+    static unsigned int seq = 0;
+    const unsigned int current = ++seq;
+
+    FLog("V22 UNDERWATER FADING BEGIN | seq=%u", current);
+    CRenderer__RenderFadingInUnderwaterEntities();
+    FLog("V22 UNDERWATER FADING END | seq=%u", current);
+}
+
+void (*CRenderer__RenderFadingInEntities)();
+void CRenderer__RenderFadingInEntities_hook()
+{
+    static unsigned int seq = 0;
+    const unsigned int current = ++seq;
+
+    FLog("V22 FADING ENTITIES BEGIN | seq=%u", current);
+    CRenderer__RenderFadingInEntities();
+    FLog("V22 FADING ENTITIES END | seq=%u", current);
+}
+
+
 #include "CFPSFix.h"
 #include "ES2VertexBuffer.h"
 #include "RQ_Commands.h"
@@ -2637,6 +2677,15 @@ void InstallHooks()
     CHook::InlineHook("_Z23RwResourcesFreeResEntryP10RwResEntry", &RwResourcesFreeResEntry_hook, &RwResourcesFreeResEntry);
 
     CHook::InlineHook("_ZN9CRenderer24RenderEverythingBarRoadsEv", &CRenderer__RenderEverythingBarRoads_hook, &CRenderer__RenderEverythingBarRoads);
+
+    // V22: isolate the exact RenderScene stage immediately after BARROADS.
+    CHook::InlineHook("_ZN9CRenderer32RenderFadingInUnderwaterEntitiesEv",
+                      &CRenderer__RenderFadingInUnderwaterEntities_hook,
+                      &CRenderer__RenderFadingInUnderwaterEntities);
+
+    CHook::InlineHook("_ZN9CRenderer22RenderFadingInEntitiesEv",
+                      &CRenderer__RenderFadingInEntities_hook,
+                      &CRenderer__RenderFadingInEntities);
 
     ms_fAspectRatio = (float*)(g_libGTASA+(VER_x32 ? 0xA26A90:0xCC7F00));
     CHook::InlineHook("_ZN4CHud14DrawCrossHairsEv", &DrawCrosshair_hook, &DrawCrosshair);
