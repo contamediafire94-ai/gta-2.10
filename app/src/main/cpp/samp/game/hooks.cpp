@@ -1423,6 +1423,38 @@ void CRenderer__RenderFadingInEntities_hook()
 }
 
 
+// =============================================================================
+// V23 DIAGNOSTICO / BYPASS TEMPORARIO DA AGUA
+//
+// O V22 mostrou:
+//   UNDERWATER FADING BEGIN -> END
+//   [SIGBUS]
+//   FADING ENTITIES BEGIN nunca aparece.
+//
+// No RenderScene original, CWaterLevel::RenderWater() fica exatamente entre
+// essas duas etapas. Para confirmar sem alterar o restante do pipeline 3D,
+// esta versao pula SOMENTE o RenderWater.
+//
+// Resultado esperado:
+// - Se o jogo passar dessa tela, a causa esta no caminho da agua/WaterShader.
+// - A agua pode ficar invisivel nesta versao. Isto e apenas um teste.
+// =============================================================================
+
+void (*CWaterLevel__RenderWater)();
+void CWaterLevel__RenderWater_hook()
+{
+    static unsigned int seq = 0;
+    const unsigned int current = ++seq;
+
+    FLog("V23 WATER BEGIN | seq=%u", current);
+    FLog("V23 WATER BYPASS | seq=%u | original RenderWater skipped", current);
+    FLog("V23 WATER END | seq=%u", current);
+
+    // TESTE V23: nao chamar CWaterLevel__RenderWater() ainda.
+    // CWaterLevel__RenderWater();
+}
+
+
 #include "CFPSFix.h"
 #include "ES2VertexBuffer.h"
 #include "RQ_Commands.h"
@@ -2554,24 +2586,65 @@ void InstallCutHooks()
 #include "..//game/WaterShader.h"
 uintptr_t* g_WaterShaderClass = nullptr;
 void (*emu_glEndInternal)();
+
+// =============================================================================
+// V24 DIAGNOSTICO: desativar SOMENTE o WaterShader customizado.
+//
+// O SIGBUS continua sempre em libGTASA.so + 0x1BC269. Neste source existe
+// uma chamada direta para 0x1BC20C (mesma regiao da libGTASA) e tambem um
+// hook de emu_glEndInternal que troca o shader antes de devolver ao GTA.
+//
+// Para separar "engine original" de "shader customizado", a V24 mantem a
+// chamada ORIGINAL emu_glEndInternal(), mas NAO chama temporariamente:
+//   WaterShader::BuildShadersSource1(...)
+//   WaterShader::EmuShader__Select3(...)
+//
+// Se GLEND BEGIN aparecer e GLEND END nao aparecer, o crash esta dentro do
+// emu_glEndInternal original. Se os dois aparecerem e o jogo avancar, o
+// WaterShader customizado era o gatilho.
+// =============================================================================
 void emu_glEndInternal_hook()
 {
-    if ( ((*(uintptr_t *)(g_libGTASA + (VER_x32 ? 0x006B7094 : 0x8944A8))) & 0x80000) != 0 )
-    {
-        if ( g_WaterShaderClass == nullptr )
-        {
-            g_WaterShaderClass = (uintptr_t*) malloc(64);
-            memset(g_WaterShaderClass, 1, 64);
-            WaterShader::BuildShadersSource1(g_WaterShaderClass);
-        }else{
-        }
-        if(g_WaterShaderClass){
-            WaterShader::EmuShader__Select3(g_WaterShaderClass);
-        }else{
-        }
+    static unsigned int v24ConnectedSeq = 0;
+    static bool v24LoggedHookActive = false;
 
+    if (!v24LoggedHookActive)
+    {
+        FLog("V24 GLEND HOOK ACTIVE");
+        v24LoggedHookActive = true;
     }
+
+    const bool connected =
+            pNetGame && pNetGame->GetGameState() == GAMESTATE_CONNECTED;
+
+    unsigned int current = 0;
+    bool trace = false;
+
+    if (connected)
+    {
+        current = ++v24ConnectedSeq;
+        trace = current <= 16;
+
+        if (trace)
+        {
+            const uintptr_t emuFlags =
+                    *(uintptr_t *)(g_libGTASA + (VER_x32 ? 0x006B7094 : 0x8944A8));
+
+            FLog("V24 GLEND BEGIN | seq=%u flags=0x%llx x32=%d",
+                 current,
+                 (unsigned long long)emuFlags,
+                 VER_x32 ? 1 : 0);
+
+            FLog("V24 WATERSHADER BYPASS | seq=%u", current);
+        }
+    }
+
+    // V24: propositalmente NAO selecionar o WaterShader customizado.
+    // A rotina original do GTA continua sendo chamada normalmente.
     emu_glEndInternal();
+
+    if (trace)
+        FLog("V24 GLEND END | seq=%u", current);
 }
 
 void InstallSpecialHooks()
@@ -2664,7 +2737,8 @@ void InstallHooks()
         }
     }
 
-    CHook::InlineHook("_Z17emu_glEndInternalv", (uintptr_t)emu_glEndInternal_hook, (uintptr_t*)&emu_glEndInternal); // WaterShader
+    FLog("V24 INSTALL: emu_glEndInternal WaterShader bypass diagnostic");
+    CHook::InlineHook("_Z17emu_glEndInternalv", (uintptr_t)emu_glEndInternal_hook, (uintptr_t*)&emu_glEndInternal); // V24 diagnostic
 
     CHook::Redirect("_ZN4CHID12GetInputTypeEv", &GetInputType);
 
@@ -2686,6 +2760,13 @@ void InstallHooks()
     CHook::InlineHook("_ZN9CRenderer22RenderFadingInEntitiesEv",
                       &CRenderer__RenderFadingInEntities_hook,
                       &CRenderer__RenderFadingInEntities);
+
+
+    // V23: RenderWater fica entre UNDERWATER FADING e FADING ENTITIES.
+    // Bypass temporario para confirmar se o SIGBUS vem do caminho da agua.
+    CHook::InlineHook("_ZN11CWaterLevel11RenderWaterEv",
+                      &CWaterLevel__RenderWater_hook,
+                      &CWaterLevel__RenderWater);
 
     ms_fAspectRatio = (float*)(g_libGTASA+(VER_x32 ? 0xA26A90:0xCC7F00));
     CHook::InlineHook("_ZN4CHud14DrawCrossHairsEv", &DrawCrosshair_hook, &DrawCrosshair);
