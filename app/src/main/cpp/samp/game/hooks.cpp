@@ -1445,13 +1445,17 @@ void CWaterLevel__RenderWater_hook()
 {
     static unsigned int seq = 0;
     const unsigned int current = ++seq;
+    const bool trace = current <= 16;
 
-    FLog("V23 WATER BEGIN | seq=%u", current);
-    FLog("V23 WATER BYPASS | seq=%u | original RenderWater skipped", current);
-    FLog("V23 WATER END | seq=%u", current);
+    if (trace)
+        FLog("V25 WATER BEGIN | seq=%u", current);
 
-    // TESTE V23: nao chamar CWaterLevel__RenderWater() ainda.
-    // CWaterLevel__RenderWater();
+    // V25: WaterShader customizado continua bypassado no emu_glEndInternal_hook,
+    // mas a rotina ORIGINAL de agua do GTA volta a ser executada.
+    CWaterLevel__RenderWater();
+
+    if (trace)
+        FLog("V25 WATER END | seq=%u", current);
 }
 
 
@@ -2737,7 +2741,7 @@ void InstallHooks()
         }
     }
 
-    FLog("V24 INSTALL: emu_glEndInternal WaterShader bypass diagnostic");
+    FLog("V25 INSTALL: original RenderWater restored; custom WaterShader still bypassed");
     CHook::InlineHook("_Z17emu_glEndInternalv", (uintptr_t)emu_glEndInternal_hook, (uintptr_t*)&emu_glEndInternal); // V24 diagnostic
 
     CHook::Redirect("_ZN4CHID12GetInputTypeEv", &GetInputType);
