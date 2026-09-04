@@ -477,8 +477,44 @@ void Render2dStuff()
     if (v21TraceTwoD)
         FLog("V21 2D UI END | seq=%u", v21TwoDCurrent);
 
-    // Publish completion only after every HUD/TextDraw/UI command for this
-    // Render2dStuff pass has been submitted.
+    // V39: targeted render-target test.
+    // The original pipeline flushes an active alternate render target BEFORE
+    // drawing 2D. V38 proved ordering is no longer the problem, but the final
+    // HUD/TextDraw/UI pixels still never reach the presented framebuffer.
+    //
+    // Re-check the engine's alt-target state AFTER the whole 2D pass. If it is
+    // active again, flush it here so the 2D result is resolved before the V31
+    // presentation copy. This uses the same GTA routine already proven safe at
+    // the start of Render2dStuff; no private RenderQueue calls are used.
+    const uintptr_t v39AltTestTarget =
+            g_libGTASA + (VER_x32 ? 0x001BB7F4 + 1 : 0x24EA90);
+    const uintptr_t v39AltFlushTarget =
+            g_libGTASA + (VER_x32 ? 0x001BC20C + 1 : 0x24F5B8);
+
+    const bool v39PostAltRenderTarget =
+            CHook::CallFunction<bool>(v39AltTestTarget);
+
+    if (v21TraceTwoD)
+        FLog("V39 2D POST_ALTTEST | seq=%u altRT=%d test=%p",
+             v21TwoDCurrent,
+             v39PostAltRenderTarget ? 1 : 0,
+             (void*)v39AltTestTarget);
+
+    if (v39PostAltRenderTarget)
+    {
+        if (v21TraceTwoD)
+            FLog("V39 2D POST_ALTFLUSH BEGIN | seq=%u target=%p",
+                 v21TwoDCurrent, (void*)v39AltFlushTarget);
+
+        CHook::CallFunction<void>(v39AltFlushTarget);
+
+        if (v21TraceTwoD)
+            FLog("V39 2D POST_ALTFLUSH END | seq=%u",
+                 v21TwoDCurrent);
+    }
+
+    // Publish completion only after every HUD/TextDraw/UI command and the
+    // optional post-2D alt-target resolve have been submitted.
     g_v37TwoDCompleted.store(v21TwoDCurrent, std::memory_order_release);
     g_v37TwoDInProgress.store(false, std::memory_order_release);
 
@@ -3708,7 +3744,7 @@ void InstallHooks()
         }
     }
 
-    FLog("V38 INSTALL: FULL_2D + MUTEX_PRESENT_SERIALIZATION + V31_FALLBACK");
+    FLog("V39 INSTALL: V38_MUTEX + POST_2D_ALT_TARGET_RESOLVE + V31_FALLBACK");
 
     g_v29EglSwapStub = shadowhook_hook_sym_name(
             "libEGL.so",
