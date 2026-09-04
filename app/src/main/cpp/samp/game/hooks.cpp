@@ -481,11 +481,36 @@ void Render2dStuff_V26_hook()
     {
         EGLContext ctx = eglGetCurrentContext();
         EGLSurface draw = eglGetCurrentSurface(EGL_DRAW);
-        FLog("V29 RENDER2D | seq=%u tid=%d ctx=%p draw=%p",
+        FLog("V33 RENDER2D BEGIN | seq=%u tid=%d ctx=%p draw=%p",
              current, V29GetTid(), (void*)ctx, (void*)draw);
     }
 
+    // Keep the original GTA 2D path intact first. This was the stable V31 path.
     Render2dStuff_V26_Original();
+
+    // V33: restore only the SA-MP 2D layers that were intentionally omitted
+    // during the framebuffer investigation. The original source already had
+    // this exact post-Render2dStuff pattern commented out.
+    if (pNetGame)
+    {
+        CTextDrawPool* pTextDrawPool = pNetGame->GetTextDrawPool();
+        if (pTextDrawPool)
+        {
+            pTextDrawPool->Draw();
+            if (current <= 16)
+                FLog("V33 TEXTDRAW DRAW | seq=%u pool=%p", current, pTextDrawPool);
+        }
+    }
+
+    if (pUI)
+    {
+        pUI->render();
+        if (current <= 16)
+            FLog("V33 UI RENDER | seq=%u ui=%p", current, pUI);
+    }
+
+    if (current <= 16)
+        FLog("V33 RENDER2D END | seq=%u", current);
 }
 
 // -----------------------------------------------------------------------------
@@ -3506,7 +3531,7 @@ void InstallHooks()
         }
     }
 
-    FLog("V31 INSTALL: FBO2 -> FBO0 guarded blit test");
+    FLog("V33 INSTALL: V31 blit + SA-MP TextDraw/UI restore");
 
     g_v29EglSwapStub = shadowhook_hook_sym_name(
             "libEGL.so",
