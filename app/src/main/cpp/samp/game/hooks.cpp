@@ -182,6 +182,50 @@ void RenderEffects() {
         FLog("V21 EFFECTS END | seq=%u", v21EffectsCurrent);
 }
 
+// =============================================================================
+// V30 A/B CONTROLADO DO RenderEffects
+//
+// Fase 0: preserva exatamente o RenderEffects customizado usado na V29.
+// Depois de 30 chamadas conectadas, troca uma unica vez para o RenderEffects
+// ORIGINAL do GTA via trampoline. O swap probe registra a fase atual para
+// correlacionar qualquer mudanca de FBO/pixels com essa transicao.
+// =============================================================================
+static void (*RenderEffects_V30_Original)() = nullptr;
+static std::atomic<unsigned int> g_v30EffectsConnectedCount{0};
+static std::atomic<int> g_v30EffectsPhase{0}; // 0=custom V29, 1=original GTA
+
+static void RenderEffects_V30_hook()
+{
+    const bool connected =
+            pNetGame && pNetGame->GetGameState() == GAMESTATE_CONNECTED;
+
+    // Antes da conexao mantemos o comportamento da V29 para nao alterar
+    // bootstrap/loading por causa deste A/B.
+    if (!connected)
+    {
+        RenderEffects();
+        return;
+    }
+
+    const unsigned int n =
+            g_v30EffectsConnectedCount.fetch_add(1, std::memory_order_relaxed) + 1;
+
+    if (n <= 30 || !RenderEffects_V30_Original)
+    {
+        g_v30EffectsPhase.store(0, std::memory_order_relaxed);
+        RenderEffects();
+        return;
+    }
+
+    if (g_v30EffectsPhase.exchange(1, std::memory_order_relaxed) == 0)
+    {
+        FLog("V30 EFFECTS SWITCH | connectedCall=%u mode=ORIGINAL_GTA tid=%d ctx=%p",
+             n, (int)syscall(SYS_gettid), (void*)eglGetCurrentContext());
+    }
+
+    RenderEffects_V30_Original();
+}
+
 /*void MainLoop();
 void(*Render2dStuff)();
 void Render2dStuff_hook()
@@ -633,6 +677,154 @@ static bool V29ShouldTraceSwap(unsigned int seq)
     return seq <= 60 || (seq <= 600 && (seq % 30) == 0);
 }
 
+// -----------------------------------------------------------------------------
+// V30: auditoria do render target atualmente ligado.
+//
+// Quando o GTA entra no 3D, a V29 observou FBO 2 / viewport 960x452 antes do
+// eglSwapBuffers. Agora lemos:
+//   1) status + objeto do COLOR_ATTACHMENT0 do FBO nao-zero;
+//   2) cinco pixels do proprio FBO interno;
+//   3) cinco pixels do FBO 0 (Surface) no mesmo instante;
+// e restauramos imediatamente o FBO original. Nenhum blit/clear e feito.
+// -----------------------------------------------------------------------------
+static std::atomic<unsigned int> g_v30NonZeroSamples{0};
+static std::atomic<unsigned int> g_v30DefaultComparisons{0};
+
+static void V30ReadFivePixels(GLint width, GLint height, GLubyte out[5][4], GLenum* outErr)
+{
+    memset(out, 0, 5 * 4 * sizeof(GLubyte));
+
+    if (width <= 8 || height <= 8)
+    {
+        if (outErr) *outErr = GL_INVALID_VALUE;
+        return;
+    }
+
+    const GLint xs[5] = {
+            width / 2, width / 4, (width * 3) / 4,
+            width / 4, (width * 3) / 4
+    };
+    const GLint ys[5] = {
+            height / 2, height / 4, height / 4,
+            (height * 3) / 4, (height * 3) / 4
+    };
+
+    while (glGetError() != GL_NO_ERROR) {}
+    for (int i = 0; i < 5; ++i)
+        glReadPixels(xs[i], ys[i], 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, out[i]);
+
+    if (outErr) *outErr = glGetError();
+}
+
+static void V30ProbeCurrentRenderTarget(
+        unsigned int swapSeq,
+        int swapTid,
+        GLint currentFbo,
+        const GLint viewport[4],
+        EGLint surfaceWidth,
+        EGLint surfaceHeight)
+{
+    if (currentFbo <= 0 || viewport[2] <= 8 || viewport[3] <= 8)
+        return;
+
+    const unsigned int sampleNo =
+            g_v30NonZeroSamples.fetch_add(1, std::memory_order_relaxed) + 1;
+
+    // Limita o custo do glReadPixels. Queremos amostras suficientes antes e
+    // depois do switch de RenderEffects, nao leitura em todos os frames.
+    const int effectsPhase = g_v30EffectsPhase.load(std::memory_order_relaxed);
+    const unsigned int effectsCalls =
+            g_v30EffectsConnectedCount.load(std::memory_order_relaxed);
+
+    static std::atomic<unsigned int> customSamples{0};
+    static std::atomic<unsigned int> originalSamples{0};
+
+    unsigned int phaseSample = 0;
+    if (effectsPhase == 0)
+        phaseSample = customSamples.fetch_add(1, std::memory_order_relaxed) + 1;
+    else
+        phaseSample = originalSamples.fetch_add(1, std::memory_order_relaxed) + 1;
+
+    if (phaseSample > 6)
+        return;
+
+    while (glGetError() != GL_NO_ERROR) {}
+
+    GLenum fbStatus = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+    GLint attachmentType = GL_NONE;
+    GLint attachmentName = 0;
+
+    glGetFramebufferAttachmentParameteriv(
+            GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+            GL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE, &attachmentType);
+    glGetFramebufferAttachmentParameteriv(
+            GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+            GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME, &attachmentName);
+    GLenum metaErr = glGetError();
+
+    GLubyte offscreenPx[5][4] = {};
+    GLenum offscreenErr = GL_NO_ERROR;
+    V30ReadFivePixels(viewport[2], viewport[3], offscreenPx, &offscreenErr);
+
+    // Compara com o framebuffer padrao da Surface no MESMO swap.
+    GLubyte defaultPx[5][4] = {};
+    GLenum defaultErr = GL_NO_ERROR;
+    bool defaultRead = false;
+
+    if (surfaceWidth > 8 && surfaceHeight > 8)
+    {
+        if (glBindFramebuffer_V29_Original)
+            glBindFramebuffer_V29_Original(GL_FRAMEBUFFER, 0);
+        else
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+        GLint verifyDefault = -1;
+        glGetIntegerv(GL_FRAMEBUFFER_BINDING, &verifyDefault);
+
+        if (verifyDefault == 0)
+        {
+            V30ReadFivePixels(surfaceWidth, surfaceHeight, defaultPx, &defaultErr);
+            defaultRead = true;
+            g_v30DefaultComparisons.fetch_add(1, std::memory_order_relaxed);
+        }
+
+        if (glBindFramebuffer_V29_Original)
+            glBindFramebuffer_V29_Original(GL_FRAMEBUFFER, (GLuint)currentFbo);
+        else
+            glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)currentFbo);
+    }
+
+    GLint restoredFbo = -1;
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &restoredFbo);
+    GLenum restoreErr = glGetError();
+
+    FLog("V30 FBO AUDIT | swap=%u sample=%u phase=%d phaseSample=%u effectsCalls=%u tid=%d fbo=%d viewport=%d,%d,%d,%d status=0x%x colorType=0x%x colorName=%d metaErr=0x%x restored=%d restoreErr=0x%x",
+         swapSeq, sampleNo, effectsPhase, phaseSample, effectsCalls, swapTid,
+         (int)currentFbo,
+         (int)viewport[0], (int)viewport[1], (int)viewport[2], (int)viewport[3],
+         (unsigned int)fbStatus, (unsigned int)attachmentType, (int)attachmentName,
+         (unsigned int)metaErr, (int)restoredFbo, (unsigned int)restoreErr);
+
+    FLog("V30 FBO PIXELS | swap=%u phase=%d fbo=%d p0=%u,%u,%u,%u p1=%u,%u,%u,%u p2=%u,%u,%u,%u p3=%u,%u,%u,%u p4=%u,%u,%u,%u err=0x%x",
+         swapSeq, effectsPhase, (int)currentFbo,
+         offscreenPx[0][0], offscreenPx[0][1], offscreenPx[0][2], offscreenPx[0][3],
+         offscreenPx[1][0], offscreenPx[1][1], offscreenPx[1][2], offscreenPx[1][3],
+         offscreenPx[2][0], offscreenPx[2][1], offscreenPx[2][2], offscreenPx[2][3],
+         offscreenPx[3][0], offscreenPx[3][1], offscreenPx[3][2], offscreenPx[3][3],
+         offscreenPx[4][0], offscreenPx[4][1], offscreenPx[4][2], offscreenPx[4][3],
+         (unsigned int)offscreenErr);
+
+    FLog("V30 FBO0 PIXELS | swap=%u phase=%d read=%d size=%dx%d p0=%u,%u,%u,%u p1=%u,%u,%u,%u p2=%u,%u,%u,%u p3=%u,%u,%u,%u p4=%u,%u,%u,%u err=0x%x",
+         swapSeq, effectsPhase, defaultRead ? 1 : 0,
+         (int)surfaceWidth, (int)surfaceHeight,
+         defaultPx[0][0], defaultPx[0][1], defaultPx[0][2], defaultPx[0][3],
+         defaultPx[1][0], defaultPx[1][1], defaultPx[1][2], defaultPx[1][3],
+         defaultPx[2][0], defaultPx[2][1], defaultPx[2][2], defaultPx[2][3],
+         defaultPx[3][0], defaultPx[3][1], defaultPx[3][2], defaultPx[3][3],
+         defaultPx[4][0], defaultPx[4][1], defaultPx[4][2], defaultPx[4][3],
+         (unsigned int)defaultErr);
+}
+
 static EGLBoolean eglSwapBuffers_V29_hook(EGLDisplay dpy, EGLSurface surface)
 {
     if (!eglSwapBuffers_V29_Original)
@@ -696,8 +888,11 @@ static EGLBoolean eglSwapBuffers_V29_hook(EGLDisplay dpy, EGLSurface surface)
 
     if (V29ShouldTraceSwap(current))
     {
-        FLog("V29 FRAME | seq=%u state=%d swapTid=%d gpuTid=%d ctx=%p draw=%p size=%dx%d q=%d/%d fbo=%d viewport=%d,%d,%d,%d drawsA=%u drawsE=%u binds=%u lastFbo=%d nonZeroFbo=%d clears=%u blackClears=%u render2d=%u barroads=%u emuEnd=%u glErr=0x%x",
-             current, gameState, swapTid, lastGpuTid,
+        FLog("V30 FRAME | seq=%u state=%d effectsPhase=%d effectsCalls=%u swapTid=%d gpuTid=%d ctx=%p draw=%p size=%dx%d q=%d/%d fbo=%d viewport=%d,%d,%d,%d drawsA=%u drawsE=%u binds=%u lastFbo=%d nonZeroFbo=%d clears=%u blackClears=%u render2d=%u barroads=%u emuEnd=%u glErr=0x%x",
+             current, gameState,
+             g_v30EffectsPhase.load(std::memory_order_relaxed),
+             g_v30EffectsConnectedCount.load(std::memory_order_relaxed),
+             swapTid, lastGpuTid,
              (void*)currentContext, (void*)currentDraw,
              (int)width, (int)height, (int)qWidth, (int)qHeight,
              (int)fbo,
@@ -706,6 +901,15 @@ static EGLBoolean eglSwapBuffers_V29_hook(EGLDisplay dpy, EGLSurface surface)
              drawsA, drawsE, binds, lastBoundFbo, lastNonZeroFbo,
              clears, blackClears, r2d, bar, emuEnd,
              (unsigned int)glErrBefore);
+    }
+
+    if (currentContext != EGL_NO_CONTEXT &&
+        currentDraw != EGL_NO_SURFACE &&
+        currentDraw == surface &&
+        fbo > 0)
+    {
+        V30ProbeCurrentRenderTarget(
+                current, swapTid, fbo, viewport, width, height);
     }
 
     if (V29ShouldSamplePixels(current) &&
@@ -753,7 +957,7 @@ static EGLBoolean eglSwapBuffers_V29_hook(EGLDisplay dpy, EGLSurface surface)
 
     if (V29ShouldTraceSwap(current))
     {
-        FLog("V29 SWAP AFTER | seq=%u result=%d eglErr=0x%x curDpy=%p",
+        FLog("V30 SWAP AFTER | seq=%u result=%d eglErr=0x%x curDpy=%p",
              current, (int)result, (unsigned int)eglErr, (void*)currentDisplay);
     }
 
@@ -3065,7 +3269,10 @@ void InstallHooks()
     CHook::InlineHook("_Z13Render2dStuffv",
                       &Render2dStuff_V26_hook,
                       &Render2dStuff_V26_Original);
-    CHook::Redirect("_Z13RenderEffectsv", &RenderEffects);
+    CHook::InlineHook("_Z13RenderEffectsv",
+                      &RenderEffects_V30_hook,
+                      &RenderEffects_V30_Original);
+    FLog("V30 EFFECTS HOOK | original=%p", (void*)RenderEffects_V30_Original);
     CHook::InlineHook("_Z14AND_TouchEventiiii", &AND_TouchEvent_hook, &AND_TouchEvent);
 	
     CHook::Redirect("_ZN11CHudColours12GetIntColourEh", &CHudColours__GetIntColour); // dangerous
@@ -3116,7 +3323,7 @@ void InstallHooks()
         }
     }
 
-    FLog("V29 INSTALL: frame-path GPU probe");
+    FLog("V30 INSTALL: FBO2 content + RenderEffects A/B probe");
 
     g_v29EglSwapStub = shadowhook_hook_sym_name(
             "libEGL.so",
