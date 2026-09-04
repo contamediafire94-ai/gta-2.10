@@ -1,5 +1,8 @@
 #include <EGL/egl.h>
 #include <GLES2/gl2.h>
+#include <atomic>
+#include <unistd.h>
+#include <sys/syscall.h>
 #include <errno.h>
 #include <string.h>
 #include "../main.h"
@@ -403,74 +406,248 @@ void Render2dStuff()
 }
 
 // =============================================================================
-// V28 DIAGNOSTICO / PROBE DA APRESENTACAO EGL
+// V29 DIAGNOSTICO DO FRAME REAL / RENDER THREAD
 //
-// A V27 provou que o jogo, CNetGame, spawn, TextDraws e o renderer continuam
-// ativos, mas o clear magenta executado dentro de Render2dStuff nao chega a
-// tela. Isso indica que Render2dStuff roda fora do contexto/surface EGL que e
-// realmente apresentado pelo Android.
+// A V28 provou que:
+//   - eglSwapBuffers() e a EGLSurface exibida pelo Android sao validos;
+//   - FBO 0 / viewport 1525x720 sao apresentados normalmente;
+//   - o clear magenta feito imediatamente antes do swap aparece na tela.
 //
-// Nesta versao o Render2dStuff volta a ser apenas observado. O teste magenta
-// foi movido para eglSwapBuffers(), o ultimo ponto antes da EGLSurface ser
-// apresentada na tela.
+// Portanto a V29 NAO pinta mais a tela. Ela mede o caminho imediatamente
+// anterior ao swap para descobrir qual destes casos ocorre:
+//   A) CPU percorre o renderer, mas nenhum draw GL chega ao render thread;
+//   B) draws ocorrem em outro FBO e o resultado nao chega ao FBO 0;
+//   C) o frame e desenhado e depois limpo de preto antes do swap.
 // =============================================================================
+
+static inline int V29GetTid()
+{
+    return (int)syscall(SYS_gettid);
+}
+
+static std::atomic<unsigned int> g_v29DrawArraysCount{0};
+static std::atomic<unsigned int> g_v29DrawElementsCount{0};
+static std::atomic<unsigned int> g_v29FramebufferBindCount{0};
+static std::atomic<unsigned int> g_v29ColorClearCount{0};
+static std::atomic<unsigned int> g_v29BlackClearCount{0};
+static std::atomic<unsigned int> g_v29Render2dCount{0};
+static std::atomic<unsigned int> g_v29BarRoadsCount{0};
+static std::atomic<unsigned int> g_v29EmuEndCount{0};
+static std::atomic<int> g_v29LastGpuTid{-1};
+static std::atomic<int> g_v29LastBoundFbo{-1};
+static std::atomic<int> g_v29LastNonZeroFbo{-1};
+
 void (*Render2dStuff_V26_Original)();
 
 void Render2dStuff_V26_hook()
 {
     static unsigned int seq = 0;
     const unsigned int current = ++seq;
-    const bool trace = current <= 16;
+    g_v29Render2dCount.fetch_add(1, std::memory_order_relaxed);
 
-    GLint fboBefore = -1;
-    GLint fboAfter = -1;
-    GLint viewport[4] = {0, 0, 0, 0};
-
-    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &fboBefore);
-    glGetIntegerv(GL_VIEWPORT, viewport);
-
-    if (trace)
-        FLog("V28 RENDER2D BEFORE | seq=%u fbo=%d viewport=%d,%d,%d,%d",
-             current,
-             (int)fboBefore,
-             (int)viewport[0],
-             (int)viewport[1],
-             (int)viewport[2],
-             (int)viewport[3]);
+    if (current <= 16)
+    {
+        EGLContext ctx = eglGetCurrentContext();
+        EGLSurface draw = eglGetCurrentSurface(EGL_DRAW);
+        FLog("V29 RENDER2D | seq=%u tid=%d ctx=%p draw=%p",
+             current, V29GetTid(), (void*)ctx, (void*)draw);
+    }
 
     Render2dStuff_V26_Original();
-
-    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &fboAfter);
-
-    if (trace)
-        FLog("V28 RENDER2D AFTER | seq=%u fbo=%d", current, (int)fboAfter);
 }
 
 // -----------------------------------------------------------------------------
-// V28: hook da apresentacao final EGL.
-// O hook e global em libEGL, mas so altera pixels depois que pNetGame existe.
-// Assim o launcher / splash nao sao afetados.
+// V29: interceptores GL leves. Nao alteram estado; apenas contam/observam.
 // -----------------------------------------------------------------------------
-static EGLBoolean (*eglSwapBuffers_V28_Original)(EGLDisplay, EGLSurface) = nullptr;
-static void* g_v28EglSwapStub = nullptr;
+static void (*glBindFramebuffer_V29_Original)(GLenum, GLuint) = nullptr;
+static void (*glClearColor_V29_Original)(GLfloat, GLfloat, GLfloat, GLfloat) = nullptr;
+static void (*glClear_V29_Original)(GLbitfield) = nullptr;
+static void (*glDrawArrays_V29_Original)(GLenum, GLint, GLsizei) = nullptr;
+static void (*glDrawElements_V29_Original)(GLenum, GLsizei, GLenum, const void*) = nullptr;
 
-static EGLBoolean eglSwapBuffers_V28_hook(EGLDisplay dpy, EGLSurface surface)
+static void* g_v29BindFramebufferStub = nullptr;
+static void* g_v29ClearColorStub = nullptr;
+static void* g_v29ClearStub = nullptr;
+static void* g_v29DrawArraysStub = nullptr;
+static void* g_v29DrawElementsStub = nullptr;
+
+static void glBindFramebuffer_V29_hook(GLenum target, GLuint framebuffer)
 {
-    if (!eglSwapBuffers_V28_Original)
+    if (!glBindFramebuffer_V29_Original)
+        return;
+
+    if (pNetGame)
+    {
+        const unsigned int n = g_v29FramebufferBindCount.fetch_add(1, std::memory_order_relaxed) + 1;
+        g_v29LastGpuTid.store(V29GetTid(), std::memory_order_relaxed);
+
+        if (target == GL_FRAMEBUFFER)
+        {
+            g_v29LastBoundFbo.store((int)framebuffer, std::memory_order_relaxed);
+            if (framebuffer != 0)
+                g_v29LastNonZeroFbo.store((int)framebuffer, std::memory_order_relaxed);
+        }
+
+        static std::atomic<unsigned int> totalTrace{0};
+        const unsigned int t = totalTrace.fetch_add(1, std::memory_order_relaxed) + 1;
+        if (t <= 24)
+        {
+            FLog("V29 GL BIND_FBO | call=%u frameCount=%u tid=%d target=0x%x fbo=%u",
+                 t, n, V29GetTid(), (unsigned int)target, (unsigned int)framebuffer);
+        }
+    }
+
+    glBindFramebuffer_V29_Original(target, framebuffer);
+}
+
+static void glClearColor_V29_hook(GLfloat r, GLfloat g, GLfloat b, GLfloat a)
+{
+    if (!glClearColor_V29_Original)
+        return;
+
+    if (pNetGame)
+    {
+        static std::atomic<unsigned int> totalTrace{0};
+        const unsigned int t = totalTrace.fetch_add(1, std::memory_order_relaxed) + 1;
+        g_v29LastGpuTid.store(V29GetTid(), std::memory_order_relaxed);
+
+        if (t <= 16)
+        {
+            FLog("V29 GL CLEAR_COLOR | call=%u tid=%d rgba=%.3f,%.3f,%.3f,%.3f",
+                 t, V29GetTid(), r, g, b, a);
+        }
+    }
+
+    glClearColor_V29_Original(r, g, b, a);
+}
+
+static void glClear_V29_hook(GLbitfield mask)
+{
+    if (!glClear_V29_Original)
+        return;
+
+    if (pNetGame && (mask & GL_COLOR_BUFFER_BIT))
+    {
+        const unsigned int n = g_v29ColorClearCount.fetch_add(1, std::memory_order_relaxed) + 1;
+        g_v29LastGpuTid.store(V29GetTid(), std::memory_order_relaxed);
+
+        GLfloat cc[4] = {0.f, 0.f, 0.f, 0.f};
+        GLint fbo = -1;
+        glGetFloatv(GL_COLOR_CLEAR_VALUE, cc);
+        glGetIntegerv(GL_FRAMEBUFFER_BINDING, &fbo);
+
+        const bool black =
+                cc[0] <= 0.01f &&
+                cc[1] <= 0.01f &&
+                cc[2] <= 0.01f;
+
+        if (black)
+            g_v29BlackClearCount.fetch_add(1, std::memory_order_relaxed);
+
+        static std::atomic<unsigned int> totalTrace{0};
+        const unsigned int t = totalTrace.fetch_add(1, std::memory_order_relaxed) + 1;
+        if (t <= 24)
+        {
+            FLog("V29 GL CLEAR | call=%u frameCount=%u tid=%d mask=0x%x fbo=%d rgba=%.3f,%.3f,%.3f,%.3f black=%d",
+                 t, n, V29GetTid(), (unsigned int)mask, (int)fbo,
+                 cc[0], cc[1], cc[2], cc[3], black ? 1 : 0);
+        }
+    }
+
+    glClear_V29_Original(mask);
+}
+
+static void glDrawArrays_V29_hook(GLenum mode, GLint first, GLsizei count)
+{
+    if (!glDrawArrays_V29_Original)
+        return;
+
+    if (pNetGame)
+    {
+        g_v29DrawArraysCount.fetch_add(1, std::memory_order_relaxed);
+        g_v29LastGpuTid.store(V29GetTid(), std::memory_order_relaxed);
+    }
+
+    glDrawArrays_V29_Original(mode, first, count);
+}
+
+static void glDrawElements_V29_hook(GLenum mode, GLsizei count, GLenum type, const void* indices)
+{
+    if (!glDrawElements_V29_Original)
+        return;
+
+    if (pNetGame)
+    {
+        g_v29DrawElementsCount.fetch_add(1, std::memory_order_relaxed);
+        g_v29LastGpuTid.store(V29GetTid(), std::memory_order_relaxed);
+    }
+
+    glDrawElements_V29_Original(mode, count, type, indices);
+}
+
+// -----------------------------------------------------------------------------
+// V29: acompanha troca de contexto EGL. Pode nao aparecer se o contexto tiver
+// sido criado antes da instalacao dos hooks; nesse caso o EGLSWAP ainda informa
+// o contexto/thread atual.
+// -----------------------------------------------------------------------------
+static EGLBoolean (*eglMakeCurrent_V29_Original)(
+        EGLDisplay, EGLSurface, EGLSurface, EGLContext) = nullptr;
+static void* g_v29EglMakeCurrentStub = nullptr;
+
+static EGLBoolean eglMakeCurrent_V29_hook(
+        EGLDisplay dpy, EGLSurface draw, EGLSurface read, EGLContext ctx)
+{
+    if (!eglMakeCurrent_V29_Original)
         return EGL_FALSE;
 
-    // Antes de entrar no multiplayer, apenas repassa normalmente.
+    EGLBoolean result = eglMakeCurrent_V29_Original(dpy, draw, read, ctx);
+    const EGLint makeCurrentErr = result ? EGL_SUCCESS : eglGetError();
+
+    static std::atomic<unsigned int> totalTrace{0};
+    const unsigned int t = totalTrace.fetch_add(1, std::memory_order_relaxed) + 1;
+    if (t <= 24)
+    {
+        FLog("V29 EGL MAKECURRENT | call=%u tid=%d dpy=%p draw=%p read=%p ctx=%p result=%d err=0x%x",
+             t, V29GetTid(), (void*)dpy, (void*)draw, (void*)read, (void*)ctx,
+             (int)result, (unsigned int)makeCurrentErr);
+    }
+
+    return result;
+}
+
+// -----------------------------------------------------------------------------
+// V29: hook da apresentacao final. Nao pinta nada.
+// Resume contadores do frame e, em pontos selecionados, le 5 pixels do FBO 0.
+// -----------------------------------------------------------------------------
+static EGLBoolean (*eglSwapBuffers_V29_Original)(EGLDisplay, EGLSurface) = nullptr;
+static void* g_v29EglSwapStub = nullptr;
+
+static bool V29ShouldSamplePixels(unsigned int seq)
+{
+    return seq == 1 || seq == 30 || seq == 60 || seq == 120 ||
+           seq == 180 || seq == 240 || seq == 360 || seq == 480;
+}
+
+static bool V29ShouldTraceSwap(unsigned int seq)
+{
+    return seq <= 60 || (seq <= 600 && (seq % 30) == 0);
+}
+
+static EGLBoolean eglSwapBuffers_V29_hook(EGLDisplay dpy, EGLSurface surface)
+{
+    if (!eglSwapBuffers_V29_Original)
+        return EGL_FALSE;
+
     if (!pNetGame)
-        return eglSwapBuffers_V28_Original(dpy, surface);
+        return eglSwapBuffers_V29_Original(dpy, surface);
 
     static unsigned int seq = 0;
     const unsigned int current = ++seq;
-    const bool trace = current <= 40;
+    const int swapTid = V29GetTid();
 
     EGLDisplay currentDisplay = eglGetCurrentDisplay();
     EGLContext currentContext = eglGetCurrentContext();
     EGLSurface currentDraw = eglGetCurrentSurface(EGL_DRAW);
-    EGLSurface currentRead = eglGetCurrentSurface(EGL_READ);
 
     EGLint width = -1;
     EGLint height = -1;
@@ -489,83 +666,96 @@ static EGLBoolean eglSwapBuffers_V28_hook(EGLDisplay dpy, EGLSurface surface)
 
     if (currentContext != EGL_NO_CONTEXT)
     {
-        glErrBefore = glGetError();
+        while (glGetError() != GL_NO_ERROR) {}
         glGetIntegerv(GL_FRAMEBUFFER_BINDING, &fbo);
         glGetIntegerv(GL_VIEWPORT, viewport);
+        glErrBefore = glGetError();
     }
 
-    if (trace)
+    const unsigned int drawsA =
+            g_v29DrawArraysCount.exchange(0, std::memory_order_relaxed);
+    const unsigned int drawsE =
+            g_v29DrawElementsCount.exchange(0, std::memory_order_relaxed);
+    const unsigned int binds =
+            g_v29FramebufferBindCount.exchange(0, std::memory_order_relaxed);
+    const unsigned int clears =
+            g_v29ColorClearCount.exchange(0, std::memory_order_relaxed);
+    const unsigned int blackClears =
+            g_v29BlackClearCount.exchange(0, std::memory_order_relaxed);
+    const unsigned int r2d =
+            g_v29Render2dCount.exchange(0, std::memory_order_relaxed);
+    const unsigned int bar =
+            g_v29BarRoadsCount.exchange(0, std::memory_order_relaxed);
+    const unsigned int emuEnd =
+            g_v29EmuEndCount.exchange(0, std::memory_order_relaxed);
+
+    const int lastGpuTid = g_v29LastGpuTid.load(std::memory_order_relaxed);
+    const int lastBoundFbo = g_v29LastBoundFbo.load(std::memory_order_relaxed);
+    const int lastNonZeroFbo = g_v29LastNonZeroFbo.exchange(-1, std::memory_order_relaxed);
+    const int gameState = pNetGame ? (int)pNetGame->GetGameState() : -1;
+
+    if (V29ShouldTraceSwap(current))
     {
-        FLog("V28 EGLSWAP BEFORE | seq=%u dpy=%p surface=%p curDpy=%p ctx=%p draw=%p read=%p size=%dx%d q=%d/%d fbo=%d viewport=%d,%d,%d,%d glErr=0x%x",
-             current,
-             (void*)dpy,
-             (void*)surface,
-             (void*)currentDisplay,
-             (void*)currentContext,
-             (void*)currentDraw,
-             (void*)currentRead,
-             (int)width,
-             (int)height,
-             (int)qWidth,
-             (int)qHeight,
+        FLog("V29 FRAME | seq=%u state=%d swapTid=%d gpuTid=%d ctx=%p draw=%p size=%dx%d q=%d/%d fbo=%d viewport=%d,%d,%d,%d drawsA=%u drawsE=%u binds=%u lastFbo=%d nonZeroFbo=%d clears=%u blackClears=%u render2d=%u barroads=%u emuEnd=%u glErr=0x%x",
+             current, gameState, swapTid, lastGpuTid,
+             (void*)currentContext, (void*)currentDraw,
+             (int)width, (int)height, (int)qWidth, (int)qHeight,
              (int)fbo,
-             (int)viewport[0],
-             (int)viewport[1],
-             (int)viewport[2],
-             (int)viewport[3],
+             (int)viewport[0], (int)viewport[1],
+             (int)viewport[2], (int)viewport[3],
+             drawsA, drawsE, binds, lastBoundFbo, lastNonZeroFbo,
+             clears, blackClears, r2d, bar, emuEnd,
              (unsigned int)glErrBefore);
     }
 
-    // TESTE VISUAL V28:
-    // Durante os primeiros swaps do multiplayer, pinta o framebuffer 0
-    // imediatamente antes da apresentacao. Se o Android realmente estiver
-    // mostrando esta surface, a tela obrigatoriamente deve ficar magenta.
-    // Salvamos/restauramos o estado GL para nao contaminar o frame seguinte.
-    const bool canPaint =
-            current <= 120 &&
-            currentContext != EGL_NO_CONTEXT &&
-            currentDraw != EGL_NO_SURFACE &&
-            surface == currentDraw &&
-            width > 0 && height > 0;
-
-    if (canPaint)
+    if (V29ShouldSamplePixels(current) &&
+        currentContext != EGL_NO_CONTEXT &&
+        currentDraw != EGL_NO_SURFACE &&
+        currentDraw == surface &&
+        fbo == 0 &&
+        width > 8 && height > 8)
     {
-        GLint oldFbo = 0;
-        GLint oldViewport[4] = {0, 0, 0, 0};
-        GLboolean oldScissor = glIsEnabled(GL_SCISSOR_TEST);
-        GLboolean oldColorMask[4] = {GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE};
-        GLfloat oldClearColor[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+        const GLint xs[5] = {
+                width / 2, width / 4, (width * 3) / 4,
+                width / 4, (width * 3) / 4
+        };
+        const GLint ys[5] = {
+                height / 2, height / 4, height / 4,
+                (height * 3) / 4, (height * 3) / 4
+        };
 
-        glGetIntegerv(GL_FRAMEBUFFER_BINDING, &oldFbo);
-        glGetIntegerv(GL_VIEWPORT, oldViewport);
-        glGetBooleanv(GL_COLOR_WRITEMASK, oldColorMask);
-        glGetFloatv(GL_COLOR_CLEAR_VALUE, oldClearColor);
+        GLubyte px[5][4] = {};
+        while (glGetError() != GL_NO_ERROR) {}
 
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
-        glViewport(0, 0, width, height);
-        glDisable(GL_SCISSOR_TEST);
-        glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
-        glClearColor(1.0f, 0.0f, 1.0f, 1.0f);
-        glClear(GL_COLOR_BUFFER_BIT);
+        for (int i = 0; i < 5; ++i)
+            glReadPixels(xs[i], ys[i], 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, px[i]);
 
-        glBindFramebuffer(GL_FRAMEBUFFER, oldFbo);
-        glViewport(oldViewport[0], oldViewport[1], oldViewport[2], oldViewport[3]);
-        if (oldScissor) glEnable(GL_SCISSOR_TEST);
-        else glDisable(GL_SCISSOR_TEST);
-        glColorMask(oldColorMask[0], oldColorMask[1], oldColorMask[2], oldColorMask[3]);
-        glClearColor(oldClearColor[0], oldClearColor[1], oldClearColor[2], oldClearColor[3]);
+        GLenum readErr = glGetError();
 
-        if (trace)
-            FLog("V28 EGLSWAP MAGENTA CLEAR | seq=%u size=%dx%d",
-                 current, (int)width, (int)height);
+        FLog("V29 PIXELS | seq=%u tid=%d p0=%u,%u,%u,%u p1=%u,%u,%u,%u p2=%u,%u,%u,%u p3=%u,%u,%u,%u p4=%u,%u,%u,%u err=0x%x",
+             current, swapTid,
+             px[0][0], px[0][1], px[0][2], px[0][3],
+             px[1][0], px[1][1], px[1][2], px[1][3],
+             px[2][0], px[2][1], px[2][2], px[2][3],
+             px[3][0], px[3][1], px[3][2], px[3][3],
+             px[4][0], px[4][1], px[4][2], px[4][3],
+             (unsigned int)readErr);
+    }
+    else if (V29ShouldSamplePixels(current))
+    {
+        FLog("V29 PIXELS SKIP | seq=%u tid=%d ctx=%p draw=%p surface=%p fbo=%d size=%dx%d",
+             current, swapTid, (void*)currentContext, (void*)currentDraw,
+             (void*)surface, (int)fbo, (int)width, (int)height);
     }
 
-    EGLBoolean result = eglSwapBuffers_V28_Original(dpy, surface);
-    EGLint eglErr = eglGetError();
+    EGLBoolean result = eglSwapBuffers_V29_Original(dpy, surface);
+    EGLint eglErr = result ? EGL_SUCCESS : eglGetError();
 
-    if (trace)
-        FLog("V28 EGLSWAP AFTER | seq=%u result=%d eglErr=0x%x",
-             current, (int)result, (unsigned int)eglErr);
+    if (V29ShouldTraceSwap(current))
+    {
+        FLog("V29 SWAP AFTER | seq=%u result=%d eglErr=0x%x curDpy=%p",
+             current, (int)result, (unsigned int)eglErr, (void*)currentDisplay);
+    }
 
     return result;
 }
@@ -692,6 +882,7 @@ void CEntity_Render_hook(CEntityGTA* pEntity)
     // em CEntity::Render e provocou o SIGBUS.
     static unsigned int v18RenderSequence = 0;
     const unsigned int renderSequence = ++v18RenderSequence;
+    const bool v29TraceLegacyRender = renderSequence <= 24;
     int modelId = -1;
 
     if (pEntity)
@@ -699,7 +890,7 @@ void CEntity_Render_hook(CEntityGTA* pEntity)
         modelId = pEntity->GetModelId();
         g_iLastRenderedObject = modelId;
 
-        FLog("V18 RENDER BEGIN | seq=%u model=%d entity=%p rwObject=%p",
+        if (v29TraceLegacyRender) FLog("V18 RENDER BEGIN | seq=%u model=%d entity=%p rwObject=%p",
              renderSequence,
              modelId,
              pEntity,
@@ -707,13 +898,13 @@ void CEntity_Render_hook(CEntityGTA* pEntity)
     }
     else
     {
-        FLog("V18 RENDER BEGIN | seq=%u model=-1 entity=null rwObject=null",
+        if (v29TraceLegacyRender) FLog("V18 RENDER BEGIN | seq=%u model=-1 entity=null rwObject=null",
              renderSequence);
     }
 
     CEntity_Render(pEntity);
 
-    FLog("V18 RENDER END | seq=%u model=%d entity=%p",
+    if (v29TraceLegacyRender) FLog("V18 RENDER END | seq=%u model=%d entity=%p",
          renderSequence,
          modelId,
          pEntity);
@@ -792,12 +983,13 @@ void CRenderer__RenderOneNonRoad_hook(CEntityGTA* pEntity)
 {
     static unsigned int seq = 0;
     const unsigned int current = ++seq;
+    const bool trace = current <= 24;
     const int modelId = V19GetModelId(pEntity);
     const int visibleCount = V20GetVisibleCount();
     const int visibleIndex = V20FindVisibleIndex(pEntity);
     CEntityGTA* nextRaw = V20GetVisibleRaw(visibleIndex + 1);
 
-    FLog("V20 NONROAD BEGIN | seq=%u model=%d entity=%p rwObject=%p visIndex=%d visCount=%d nextRaw=%p",
+    if (trace) FLog("V20 NONROAD BEGIN | seq=%u model=%d entity=%p rwObject=%p visIndex=%d visCount=%d nextRaw=%p",
          current,
          modelId,
          pEntity,
@@ -808,7 +1000,7 @@ void CRenderer__RenderOneNonRoad_hook(CEntityGTA* pEntity)
 
     CRenderer__RenderOneNonRoad(pEntity);
 
-    FLog("V20 NONROAD END | seq=%u model=%d entity=%p visIndex=%d visCount=%d nextRaw=%p",
+    if (trace) FLog("V20 NONROAD END | seq=%u model=%d entity=%p visIndex=%d visCount=%d nextRaw=%p",
          current,
          modelId,
          pEntity,
@@ -820,10 +1012,11 @@ void CRenderer__RenderOneNonRoad_hook(CEntityGTA* pEntity)
 bool (*CEntity__SetupLighting)(CEntityGTA* thiz);
 bool CEntity__SetupLighting_hook(CEntityGTA* thiz)
 {
+    static unsigned int seq = 0; const bool trace = ++seq <= 16;
     const int modelId = V19GetModelId(thiz);
-    FLog("V19 ENTITY LIGHT SETUP BEGIN | model=%d entity=%p", modelId, thiz);
+    if (trace) FLog("V19 ENTITY LIGHT SETUP BEGIN | model=%d entity=%p", modelId, thiz);
     const bool result = CEntity__SetupLighting(thiz);
-    FLog("V19 ENTITY LIGHT SETUP END | model=%d entity=%p result=%d",
+    if (trace) FLog("V19 ENTITY LIGHT SETUP END | model=%d entity=%p result=%d",
          modelId, thiz, result ? 1 : 0);
     return result;
 }
@@ -831,21 +1024,23 @@ bool CEntity__SetupLighting_hook(CEntityGTA* thiz)
 void (*CEntity__RemoveLighting)(CEntityGTA* thiz, bool setupResult);
 void CEntity__RemoveLighting_hook(CEntityGTA* thiz, bool setupResult)
 {
+    static unsigned int seq = 0; const bool trace = ++seq <= 16;
     const int modelId = V19GetModelId(thiz);
-    FLog("V19 ENTITY LIGHT REMOVE BEGIN | model=%d entity=%p setup=%d",
+    if (trace) FLog("V19 ENTITY LIGHT REMOVE BEGIN | model=%d entity=%p setup=%d",
          modelId, thiz, setupResult ? 1 : 0);
     CEntity__RemoveLighting(thiz, setupResult);
-    FLog("V19 ENTITY LIGHT REMOVE END | model=%d entity=%p", modelId, thiz);
+    if (trace) FLog("V19 ENTITY LIGHT REMOVE END | model=%d entity=%p", modelId, thiz);
 }
 
 bool (*CObject__SetupLighting)(CObjectGta* thiz);
 bool CObject__SetupLighting_hook(CObjectGta* thiz)
 {
+    static unsigned int seq = 0; const bool trace = ++seq <= 16;
     CEntityGTA* entity = reinterpret_cast<CEntityGTA*>(thiz);
     const int modelId = V19GetModelId(entity);
-    FLog("V19 OBJECT LIGHT SETUP BEGIN | model=%d object=%p", modelId, thiz);
+    if (trace) FLog("V19 OBJECT LIGHT SETUP BEGIN | model=%d object=%p", modelId, thiz);
     const bool result = CObject__SetupLighting(thiz);
-    FLog("V19 OBJECT LIGHT SETUP END | model=%d object=%p result=%d",
+    if (trace) FLog("V19 OBJECT LIGHT SETUP END | model=%d object=%p result=%d",
          modelId, thiz, result ? 1 : 0);
     return result;
 }
@@ -853,22 +1048,24 @@ bool CObject__SetupLighting_hook(CObjectGta* thiz)
 void (*CObject__RemoveLighting)(CObjectGta* thiz, bool setupResult);
 void CObject__RemoveLighting_hook(CObjectGta* thiz, bool setupResult)
 {
+    static unsigned int seq = 0; const bool trace = ++seq <= 16;
     CEntityGTA* entity = reinterpret_cast<CEntityGTA*>(thiz);
     const int modelId = V19GetModelId(entity);
-    FLog("V19 OBJECT LIGHT REMOVE BEGIN | model=%d object=%p setup=%d",
+    if (trace) FLog("V19 OBJECT LIGHT REMOVE BEGIN | model=%d object=%p setup=%d",
          modelId, thiz, setupResult ? 1 : 0);
     CObject__RemoveLighting(thiz, setupResult);
-    FLog("V19 OBJECT LIGHT REMOVE END | model=%d object=%p", modelId, thiz);
+    if (trace) FLog("V19 OBJECT LIGHT REMOVE END | model=%d object=%p", modelId, thiz);
 }
 
 bool (*CPed__SetupLighting)(CPedGTA* thiz);
 bool CPed__SetupLighting_hook(CPedGTA* thiz)
 {
+    static unsigned int seq = 0; const bool trace = ++seq <= 16;
     CEntityGTA* entity = reinterpret_cast<CEntityGTA*>(thiz);
     const int modelId = V19GetModelId(entity);
-    FLog("V19 PED LIGHT SETUP BEGIN | model=%d ped=%p", modelId, thiz);
+    if (trace) FLog("V19 PED LIGHT SETUP BEGIN | model=%d ped=%p", modelId, thiz);
     const bool result = CPed__SetupLighting(thiz);
-    FLog("V19 PED LIGHT SETUP END | model=%d ped=%p result=%d",
+    if (trace) FLog("V19 PED LIGHT SETUP END | model=%d ped=%p result=%d",
          modelId, thiz, result ? 1 : 0);
     return result;
 }
@@ -876,22 +1073,24 @@ bool CPed__SetupLighting_hook(CPedGTA* thiz)
 void (*CPed__RemoveLighting)(CPedGTA* thiz, bool setupResult);
 void CPed__RemoveLighting_hook(CPedGTA* thiz, bool setupResult)
 {
+    static unsigned int seq = 0; const bool trace = ++seq <= 16;
     CEntityGTA* entity = reinterpret_cast<CEntityGTA*>(thiz);
     const int modelId = V19GetModelId(entity);
-    FLog("V19 PED LIGHT REMOVE BEGIN | model=%d ped=%p setup=%d",
+    if (trace) FLog("V19 PED LIGHT REMOVE BEGIN | model=%d ped=%p setup=%d",
          modelId, thiz, setupResult ? 1 : 0);
     CPed__RemoveLighting(thiz, setupResult);
-    FLog("V19 PED LIGHT REMOVE END | model=%d ped=%p", modelId, thiz);
+    if (trace) FLog("V19 PED LIGHT REMOVE END | model=%d ped=%p", modelId, thiz);
 }
 
 bool (*CVehicle__SetupLighting)(CVehicleGTA* thiz);
 bool CVehicle__SetupLighting_hook(CVehicleGTA* thiz)
 {
+    static unsigned int seq = 0; const bool trace = ++seq <= 16;
     CEntityGTA* entity = reinterpret_cast<CEntityGTA*>(thiz);
     const int modelId = V19GetModelId(entity);
-    FLog("V19 VEHICLE LIGHT SETUP BEGIN | model=%d vehicle=%p", modelId, thiz);
+    if (trace) FLog("V19 VEHICLE LIGHT SETUP BEGIN | model=%d vehicle=%p", modelId, thiz);
     const bool result = CVehicle__SetupLighting(thiz);
-    FLog("V19 VEHICLE LIGHT SETUP END | model=%d vehicle=%p result=%d",
+    if (trace) FLog("V19 VEHICLE LIGHT SETUP END | model=%d vehicle=%p result=%d",
          modelId, thiz, result ? 1 : 0);
     return result;
 }
@@ -899,14 +1098,14 @@ bool CVehicle__SetupLighting_hook(CVehicleGTA* thiz)
 void (*CVehicle__RemoveLighting)(CVehicleGTA* thiz, bool setupResult);
 void CVehicle__RemoveLighting_hook(CVehicleGTA* thiz, bool setupResult)
 {
+    static unsigned int seq = 0; const bool trace = ++seq <= 16;
     CEntityGTA* entity = reinterpret_cast<CEntityGTA*>(thiz);
     const int modelId = V19GetModelId(entity);
-    FLog("V19 VEHICLE LIGHT REMOVE BEGIN | model=%d vehicle=%p setup=%d",
+    if (trace) FLog("V19 VEHICLE LIGHT REMOVE BEGIN | model=%d vehicle=%p setup=%d",
          modelId, thiz, setupResult ? 1 : 0);
     CVehicle__RemoveLighting(thiz, setupResult);
-    FLog("V19 VEHICLE LIGHT REMOVE END | model=%d vehicle=%p", modelId, thiz);
+    if (trace) FLog("V19 VEHICLE LIGHT REMOVE END | model=%d vehicle=%p", modelId, thiz);
 }
-
 /* =============================================================================== */
 
 /* =============================================================================== */
@@ -1493,6 +1692,7 @@ void CPedDamageResponseCalculator__ComputeDamageResponse_hook(CPedDamageResponse
 
 void (*CRenderer__RenderEverythingBarRoads)();
 void CRenderer__RenderEverythingBarRoads_hook() {
+    g_v29BarRoadsCount.fetch_add(1, std::memory_order_relaxed);
     static unsigned int v20BarRoadsSeq = 0;
     unsigned int currentBarSeq = 0;
     bool v20TraceThisCall = false;
@@ -1505,7 +1705,8 @@ void CRenderer__RenderEverythingBarRoads_hook() {
             {
                 CCamera& cameraProbe = *reinterpret_cast<CCamera*>(
                         g_libGTASA + (VER_x32 ? 0x00951FA8 : 0xBBA8D0));
-                FLog("V12: 3D renderer active | camera=%p sceneCamera=%p world=%p fading=%d interior=%u",
+                FLog("V29 3D RENDERER ACTIVE | tid=%d ctx=%p camera=%p sceneCamera=%p world=%p fading=%d interior=%u",
+                     V29GetTid(), (void*)eglGetCurrentContext(),
                      cameraProbe.m_pRwCamera,
                      Scene.m_pRwCamera,
                      Scene.m_pRpWorld,
@@ -1574,10 +1775,11 @@ void CRenderer__RenderFadingInUnderwaterEntities_hook()
 {
     static unsigned int seq = 0;
     const unsigned int current = ++seq;
+    const bool trace = current <= 16;
 
-    FLog("V22 UNDERWATER FADING BEGIN | seq=%u", current);
+    if (trace) FLog("V22 UNDERWATER FADING BEGIN | seq=%u", current);
     CRenderer__RenderFadingInUnderwaterEntities();
-    FLog("V22 UNDERWATER FADING END | seq=%u", current);
+    if (trace) FLog("V22 UNDERWATER FADING END | seq=%u", current);
 }
 
 void (*CRenderer__RenderFadingInEntities)();
@@ -1585,10 +1787,11 @@ void CRenderer__RenderFadingInEntities_hook()
 {
     static unsigned int seq = 0;
     const unsigned int current = ++seq;
+    const bool trace = current <= 16;
 
-    FLog("V22 FADING ENTITIES BEGIN | seq=%u", current);
+    if (trace) FLog("V22 FADING ENTITIES BEGIN | seq=%u", current);
     CRenderer__RenderFadingInEntities();
-    FLog("V22 FADING ENTITIES END | seq=%u", current);
+    if (trace) FLog("V22 FADING ENTITIES END | seq=%u", current);
 }
 
 
@@ -2778,12 +2981,13 @@ void (*emu_glEndInternal)();
 // =============================================================================
 void emu_glEndInternal_hook()
 {
+    if (pNetGame) g_v29EmuEndCount.fetch_add(1, std::memory_order_relaxed);
     static unsigned int v24ConnectedSeq = 0;
     static bool v24LoggedHookActive = false;
 
     if (!v24LoggedHookActive)
     {
-        FLog("V24 GLEND HOOK ACTIVE");
+        FLog("V29 GLEND HOOK ACTIVE | tid=%d ctx=%p", V29GetTid(), (void*)eglGetCurrentContext());
         v24LoggedHookActive = true;
     }
 
@@ -2912,16 +3116,81 @@ void InstallHooks()
         }
     }
 
-    FLog("V28 INSTALL: eglSwapBuffers presentation probe");
+    FLog("V29 INSTALL: frame-path GPU probe");
 
-    g_v28EglSwapStub = shadowhook_hook_sym_name(
+    g_v29EglSwapStub = shadowhook_hook_sym_name(
             "libEGL.so",
             "eglSwapBuffers",
-            (void*)eglSwapBuffers_V28_hook,
-            (void**)&eglSwapBuffers_V28_Original);
+            (void*)eglSwapBuffers_V29_hook,
+            (void**)&eglSwapBuffers_V29_Original);
 
-    FLog("V28 EGLSWAP HOOK | stub=%p original=%p",
-         g_v28EglSwapStub, (void*)eglSwapBuffers_V28_Original);
+    g_v29EglMakeCurrentStub = shadowhook_hook_sym_name(
+            "libEGL.so",
+            "eglMakeCurrent",
+            (void*)eglMakeCurrent_V29_hook,
+            (void**)&eglMakeCurrent_V29_Original);
+
+    // O projeto usa GLES3. Se algum simbolo nao estiver em libGLESv3,
+    // fazemos fallback para libGLESv2.
+    g_v29BindFramebufferStub = shadowhook_hook_sym_name(
+            "libGLESv3.so", "glBindFramebuffer",
+            (void*)glBindFramebuffer_V29_hook,
+            (void**)&glBindFramebuffer_V29_Original);
+    if (!g_v29BindFramebufferStub || !glBindFramebuffer_V29_Original)
+        g_v29BindFramebufferStub = shadowhook_hook_sym_name(
+                "libGLESv2.so", "glBindFramebuffer",
+                (void*)glBindFramebuffer_V29_hook,
+                (void**)&glBindFramebuffer_V29_Original);
+
+    g_v29ClearColorStub = shadowhook_hook_sym_name(
+            "libGLESv3.so", "glClearColor",
+            (void*)glClearColor_V29_hook,
+            (void**)&glClearColor_V29_Original);
+    if (!g_v29ClearColorStub || !glClearColor_V29_Original)
+        g_v29ClearColorStub = shadowhook_hook_sym_name(
+                "libGLESv2.so", "glClearColor",
+                (void*)glClearColor_V29_hook,
+                (void**)&glClearColor_V29_Original);
+
+    g_v29ClearStub = shadowhook_hook_sym_name(
+            "libGLESv3.so", "glClear",
+            (void*)glClear_V29_hook,
+            (void**)&glClear_V29_Original);
+    if (!g_v29ClearStub || !glClear_V29_Original)
+        g_v29ClearStub = shadowhook_hook_sym_name(
+                "libGLESv2.so", "glClear",
+                (void*)glClear_V29_hook,
+                (void**)&glClear_V29_Original);
+
+    g_v29DrawArraysStub = shadowhook_hook_sym_name(
+            "libGLESv3.so", "glDrawArrays",
+            (void*)glDrawArrays_V29_hook,
+            (void**)&glDrawArrays_V29_Original);
+    if (!g_v29DrawArraysStub || !glDrawArrays_V29_Original)
+        g_v29DrawArraysStub = shadowhook_hook_sym_name(
+                "libGLESv2.so", "glDrawArrays",
+                (void*)glDrawArrays_V29_hook,
+                (void**)&glDrawArrays_V29_Original);
+
+    g_v29DrawElementsStub = shadowhook_hook_sym_name(
+            "libGLESv3.so", "glDrawElements",
+            (void*)glDrawElements_V29_hook,
+            (void**)&glDrawElements_V29_Original);
+    if (!g_v29DrawElementsStub || !glDrawElements_V29_Original)
+        g_v29DrawElementsStub = shadowhook_hook_sym_name(
+                "libGLESv2.so", "glDrawElements",
+                (void*)glDrawElements_V29_hook,
+                (void**)&glDrawElements_V29_Original);
+
+    FLog("V29 HOOKS | swap=%p/%p makeCurrent=%p/%p bind=%p/%p clearColor=%p/%p clear=%p/%p drawA=%p/%p drawE=%p/%p installTid=%d ctx=%p",
+         g_v29EglSwapStub, (void*)eglSwapBuffers_V29_Original,
+         g_v29EglMakeCurrentStub, (void*)eglMakeCurrent_V29_Original,
+         g_v29BindFramebufferStub, (void*)glBindFramebuffer_V29_Original,
+         g_v29ClearColorStub, (void*)glClearColor_V29_Original,
+         g_v29ClearStub, (void*)glClear_V29_Original,
+         g_v29DrawArraysStub, (void*)glDrawArrays_V29_Original,
+         g_v29DrawElementsStub, (void*)glDrawElements_V29_Original,
+         V29GetTid(), (void*)eglGetCurrentContext());
 
     CHook::InlineHook("_Z17emu_glEndInternalv", (uintptr_t)emu_glEndInternal_hook, (uintptr_t*)&emu_glEndInternal); // V24 diagnostic
 
