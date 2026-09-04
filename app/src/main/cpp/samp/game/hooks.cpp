@@ -1203,6 +1203,98 @@ static bool V31PresentOffscreenToDefault(
     return blitErr == GL_NO_ERROR;
 }
 
+
+// =============================================================================
+// V40 - ONE-SHOT FBO ENUMERATION
+//
+// V39 proved the 2D pass finishes and emu_FlushAltRenderTarget() is executed
+// after HUD/TextDraw/UI, but the visible result still contains only the 3D
+// scene. The next question is whether the 2D pixels live in ANOTHER framebuffer
+// object while V31 keeps copying FBO 2.
+//
+// This probe runs once on the EGL/swap thread (valid GL context), while the
+// V38 mutex excludes the 2D producer. It does not clear, draw, delete, attach,
+// or modify framebuffer storage. It only binds existing FBO ids temporarily,
+// checks completeness, reads a few pixels, logs attachment metadata, and then
+// restores the original framebuffer.
+//
+// No private RenderQueue calls are used.
+// =============================================================================
+static std::atomic<bool> g_v40FboEnumDone{false};
+
+static void V40EnumerateFramebufferObjectsOnce(
+        unsigned int swapSeq,
+        int swapTid,
+        GLint originalFbo)
+{
+    if (g_v40FboEnumDone.exchange(true, std::memory_order_acq_rel))
+        return;
+
+    GLint savedFbo = originalFbo;
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &savedFbo);
+
+    FLog("V40 FBO ENUM BEGIN | swap=%u tid=%d originalFbo=%d",
+         swapSeq, swapTid, (int)savedFbo);
+
+    for (GLuint id = 1; id <= 64; ++id)
+    {
+        if (glIsFramebuffer(id) != GL_TRUE)
+            continue;
+
+        while (glGetError() != GL_NO_ERROR) {}
+
+        glBindFramebuffer(GL_FRAMEBUFFER, id);
+        const GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+
+        GLint colorType = 0;
+        GLint colorName = 0;
+        glGetFramebufferAttachmentParameteriv(
+                GL_FRAMEBUFFER,
+                GL_COLOR_ATTACHMENT0,
+                GL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE,
+                &colorType);
+        glGetFramebufferAttachmentParameteriv(
+                GL_FRAMEBUFFER,
+                GL_COLOR_ATTACHMENT0,
+                GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME,
+                &colorName);
+
+        GLubyte p0[4] = {};
+        GLubyte p1[4] = {};
+        GLubyte p2[4] = {};
+        GLenum readErr = GL_NO_ERROR;
+
+        if (status == GL_FRAMEBUFFER_COMPLETE)
+        {
+            glReadPixels(1, 1, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, p0);
+            glReadPixels(32, 32, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, p1);
+            glReadPixels(128, 96, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, p2);
+            readErr = glGetError();
+        }
+        else
+        {
+            readErr = glGetError();
+        }
+
+        FLog("V40 FBO ENUM | id=%u status=0x%x colorType=0x%x colorName=%d "
+             "p0=%u,%u,%u,%u p1=%u,%u,%u,%u p2=%u,%u,%u,%u err=0x%x",
+             (unsigned int)id,
+             (unsigned int)status,
+             (unsigned int)colorType,
+             (int)colorName,
+             p0[0], p0[1], p0[2], p0[3],
+             p1[0], p1[1], p1[2], p1[3],
+             p2[0], p2[1], p2[2], p2[3],
+             (unsigned int)readErr);
+    }
+
+    glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)savedFbo);
+    const GLenum restoreErr = glGetError();
+
+    FLog("V40 FBO ENUM END | swap=%u tid=%d restored=%d err=0x%x",
+         swapSeq, swapTid, (int)savedFbo, (unsigned int)restoreErr);
+}
+
 static EGLBoolean eglSwapBuffers_V29_hook(EGLDisplay dpy, EGLSurface surface)
 {
     if (!eglSwapBuffers_V29_Original)
@@ -1318,6 +1410,16 @@ static EGLBoolean eglSwapBuffers_V29_hook(EGLDisplay dpy, EGLSurface surface)
             // The producer is excluded for the entire finish+copy window.
             glFinish();
             const GLenum v38FinishErr = glGetError();
+
+            // V40: once the queued work is complete, enumerate already-existing
+            // framebuffer objects. This is diagnostic only and is intended to
+            // reveal whether HUD/TextDraw/UI ended up in a framebuffer other
+            // than the FBO 2 that V31 currently presents.
+            if (v38Completed > 0)
+            {
+                V40EnumerateFramebufferObjectsOnce(
+                        current, swapTid, fbo);
+            }
 
             if (current <= 40 || (current % 120) == 0)
             {
@@ -3744,7 +3846,7 @@ void InstallHooks()
         }
     }
 
-    FLog("V39 INSTALL: V38_MUTEX + POST_2D_ALT_TARGET_RESOLVE + V31_FALLBACK");
+    FLog("V40 INSTALL: V39_POST_ALTFLUSH + ONE_SHOT_FBO_ENUM + V31_FALLBACK");
 
     g_v29EglSwapStub = shadowhook_hook_sym_name(
             "libEGL.so",
