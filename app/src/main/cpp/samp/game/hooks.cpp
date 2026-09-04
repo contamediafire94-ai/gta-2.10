@@ -339,6 +339,7 @@ void Render2dStuff()
              (int)syscall(SYS_gettid),
              (void*)eglGetCurrentContext(),
              (void*)eglGetCurrentSurface(EGL_DRAW));
+        FLog("V42 RENDER CONTROL: GTA ORIGINAL ES2VertexBuffer + CRQ selector active");
     }
 
     static unsigned int v21TwoDSeq = 0;
@@ -3612,8 +3613,12 @@ void InjectHooks()
     //CPedIntelligence::InjectHooks(); //
     CWorld::InjectHooks(); //
     CGame::InjectHooks();
-    ES2VertexBuffer::InjectHooks();
-    CRQ_Commands::InjectHooks();
+    // V42 CONTROLLED TEST:
+    // Leave GTA's original ES2 vertex-buffer CPU state and RenderQueue
+    // vertex-buffer selector untouched. V41 disabled only CRQ redirect;
+    // V42 disables BOTH custom injections to isolate this entire layer.
+    // ES2VertexBuffer::InjectHooks();
+    // CRQ_Commands::InjectHooks();
     CTxdStore::InjectHooks();
     CVisibilityPlugins::InjectHooks();
     //CAdjustableHUD::InjectHooks();
@@ -3846,7 +3851,7 @@ void InstallHooks()
         }
     }
 
-    FLog("V40 INSTALL: V39_POST_ALTFLUSH + ONE_SHOT_FBO_ENUM + V31_FALLBACK");
+    FLog("V42 INSTALL: V40_BASE + ORIGINAL_ES2_CPU_STATE + ORIGINAL_CRQ_SELECTOR + V31_FALLBACK");
 
     g_v29EglSwapStub = shadowhook_hook_sym_name(
             "libEGL.so",
