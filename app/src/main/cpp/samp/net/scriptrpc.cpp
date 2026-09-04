@@ -3,6 +3,8 @@
 #include "netgame.h"
 #include "../audiostream.h"
 
+// V32 camera RPC probe: diagnostics only. Keeps V31 render/blit untouched.
+
 extern CGame *pGame;
 extern CNetGame *pNetGame;
 extern CAudioStream* pAudioStream;
@@ -62,6 +64,9 @@ void ScrSetCameraPos(RPCParameters *rpcParams)
 	bsData.Read(fY);
 	bsData.Read(fZ);
 
+    FLog("V32 CAMERA RPC POS | xyz=%.2f %.2f %.2f interior=%u",
+         fX, fY, fZ, (unsigned int)pGame->GetActiveInterior());
+
     CCamera::SetPosition(fX, fY, fZ, 0.0f, 0.0f, 0.0f);
 
     FLog("ScrSetCameraPos V5: %.2f %.2f %.2f | activeInterior=%u | refresh + load requested models",
@@ -89,6 +94,9 @@ void ScrSetCameraLookAt(RPCParameters *rpcParams)
 	if (byteType < 1 || byteType > 2) {
 		byteType = 2;
 	}
+
+    FLog("V32 CAMERA RPC LOOKAT | xyz=%.2f %.2f %.2f type=%u",
+         fX, fY, fZ, (unsigned int)byteType);
 
 	CCamera::LookAtPoint(fX, fY, fZ, byteType);
 
@@ -119,6 +127,12 @@ void ScrInterpolateCamera(RPCParameters *rpcParams)
 	if (byteMode < 1 || byteMode > 2) {
 		byteMode = 2;
 	}
+
+    FLog("V32 CAMERA RPC INTERP | mode=%s from=%.2f %.2f %.2f to=%.2f %.2f %.2f time=%d cut=%u",
+         mode ? "POS" : "LOOKAT",
+         vecFrom.x, vecFrom.y, vecFrom.z,
+         vecTo.x, vecTo.y, vecTo.z,
+         iTime, (unsigned int)byteMode);
 
 	if (iTime > 0) {
 		pNetGame->GetPlayerPool()->GetLocalPlayer()->m_bSpectateProcessed = true;
@@ -1576,7 +1590,9 @@ void ScrSetVehicleParams(RPCParameters* rpcParams)
 // 0.3.7
 void ScrSetPlayerCameraBehindPlayer(RPCParameters* rpcParams)
 {
+    FLog("V32 CAMERA RPC BEHIND | SetCameraBehindPlayer received");
     CCamera::SetBehindPlayer();
+    FLog("V32 CAMERA RPC BEHIND DONE");
 }
 // 0.3.7
 void ScrTogglePlayerControllable(RPCParameters* rpcParams)
@@ -2021,16 +2037,27 @@ void AttachCameraToObject(RPCParameters *rpcParams)
 		OBJECTID objectId;
 
 		bsData.Read(objectId);
-		if(objectId < 0 || objectId >= MAX_OBJECTS) 
+        FLog("V32 CAMERA RPC ATTACH_OBJECT | objectId=%d", (int)objectId);
+		if(objectId < 0 || objectId >= MAX_OBJECTS) {
+            FLog("V32 CAMERA RPC ATTACH_OBJECT INVALID | objectId=%d", (int)objectId);
 			return;
+        }
 
 		CObject *pObject = pObjectPool->GetAt(objectId);
 		if(pObject)
 		{
+            FLog("V32 CAMERA RPC ATTACH_OBJECT TARGET_FOUND | objectId=%d object=%p implementation=DISABLED",
+                 (int)objectId, pObject);
 			//if(pGameCamera)
 				//pGameCamera->AttachToEntity(pObject);
 		}
+        else {
+            FLog("V32 CAMERA RPC ATTACH_OBJECT TARGET_MISSING | objectId=%d", (int)objectId);
+        }
 	}
+    else {
+        FLog("V32 CAMERA RPC ATTACH_OBJECT | object pool missing");
+    }
 }
 
 void RegisterScriptRPCs(RakClientInterface *pRakClient)
