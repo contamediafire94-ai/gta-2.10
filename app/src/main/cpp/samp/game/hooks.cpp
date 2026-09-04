@@ -5,6 +5,7 @@
 #include <sys/syscall.h>
 #include <errno.h>
 #include <string.h>
+#include <dlfcn.h>
 #include "../main.h"
 #include "../vendor/armhook/patch.h"
 #include "game.h"
@@ -306,6 +307,78 @@ void ShowHud()
 
 #include "CSkyBox.h"
 //extern CJavaWrapper* pJavaWrapper;
+
+// =============================================================================
+// V36 - SINCRONIZACAO REAL DO RENDER QUEUE
+//
+// O GTA SA Android produz comandos de render em uma thread sem EGL context e
+// executa esses comandos na Graphics/RenderQueue thread. A V35 confirmou que o
+// 2D inteiro e enfileirado, mas o eglSwap/V31 podia acontecer enquanto a thread
+// produtora ainda estava emitindo comandos do 2D.
+//
+// A V36 usa o proprio RenderQueue::Flush() do GTA no final do Render2dStuff.
+// Esse metodo foi feito pelo engine para drenar/sincronizar a fila grafica.
+// Depois, no swap, preferimos o FBO0 nativo se ele ja tiver pixels; o V31 fica
+// apenas como fallback para preservar o 3D caso o resolve nativo continue vazio.
+// =============================================================================
+
+using V36RenderQueueFlushFn = void (*)(void*);
+
+static V36RenderQueueFlushFn g_v36RenderQueueFlush = nullptr;
+static void* g_v36RenderQueueObject = nullptr;
+static bool g_v36RQResolveAttempted = false;
+static std::atomic<unsigned int> g_v36RQFlushDone{0};
+
+static void V36ResolveRenderQueue()
+{
+    if (g_v36RQResolveAttempted)
+        return;
+
+    g_v36RQResolveAttempted = true;
+
+    void* gtasa = dlopen("libGTASA.so", RTLD_NOW | RTLD_NOLOAD);
+    if (!gtasa)
+        gtasa = dlopen("libGTASA.so", RTLD_NOW);
+
+    if (!gtasa)
+    {
+        FLog("V36 RQ RESOLVE FAIL | dlopen=%s", dlerror());
+        return;
+    }
+
+    g_v36RenderQueueFlush = reinterpret_cast<V36RenderQueueFlushFn>(
+            dlsym(gtasa, "_ZN11RenderQueue5FlushEv"));
+    g_v36RenderQueueObject = dlsym(gtasa, "renderQueue");
+
+    FLog("V36 RQ RESOLVE | flush=%p renderQueue=%p",
+         (void*)g_v36RenderQueueFlush, g_v36RenderQueueObject);
+}
+
+static void V36Flush2DQueue(unsigned int seq)
+{
+    V36ResolveRenderQueue();
+
+    if (!g_v36RenderQueueFlush || !g_v36RenderQueueObject)
+    {
+        if (seq <= 8)
+            FLog("V36 RQ FLUSH SKIP | seq=%u flush=%p renderQueue=%p",
+                 seq, (void*)g_v36RenderQueueFlush, g_v36RenderQueueObject);
+        return;
+    }
+
+    if (seq <= 12)
+        FLog("V36 RQ FLUSH BEGIN | seq=%u tid=%d",
+             seq, (int)syscall(SYS_gettid));
+
+    g_v36RenderQueueFlush(g_v36RenderQueueObject);
+
+    g_v36RQFlushDone.store(seq, std::memory_order_release);
+
+    if (seq <= 12)
+        FLog("V36 RQ FLUSH END | seq=%u tid=%d",
+             seq, (int)syscall(SYS_gettid));
+}
+
 void Render2dStuff()
 {
     static bool v35Full2DLogged = false;
@@ -442,6 +515,11 @@ void Render2dStuff()
     if (pUI) pUI->render();
     if (v21TraceTwoD)
         FLog("V21 2D UI END | seq=%u", v21TwoDCurrent);
+
+    // V36: force the GTA render queue to finish the 2D commands before the
+    // presentation thread is allowed to choose/blit the final framebuffer.
+    if (pNetGame && pNetGame->GetGameState() == GAMESTATE_CONNECTED)
+        V36Flush2DQueue(v21TwoDCurrent);
 
     if (v21TraceTwoD)
         FLog("V21 2D END | seq=%u", v21TwoDCurrent);
@@ -1118,6 +1196,67 @@ static bool V31PresentOffscreenToDefault(
     return blitErr == GL_NO_ERROR;
 }
 
+static bool V36DefaultFboHasVisiblePixels(
+        EGLint surfaceWidth,
+        EGLint surfaceHeight,
+        unsigned int* nonBlackOut,
+        unsigned int* maxRgbOut)
+{
+    if (nonBlackOut) *nonBlackOut = 0;
+    if (maxRgbOut) *maxRgbOut = 0;
+
+    if (surfaceWidth <= 8 || surfaceHeight <= 8)
+        return false;
+
+    GLint savedReadFbo = 0;
+    while (glGetError() != GL_NO_ERROR) {}
+    glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &savedReadFbo);
+
+    auto BindFbo = [](GLenum target, GLuint fbo)
+    {
+        if (glBindFramebuffer_V29_Original)
+            glBindFramebuffer_V29_Original(target, fbo);
+        else
+            glBindFramebuffer(target, fbo);
+    };
+
+    BindFbo(GL_READ_FRAMEBUFFER, 0);
+
+    unsigned int nonBlack = 0;
+    unsigned int maxRgb = 0;
+    GLubyte px[4] = {};
+
+    for (int gy = 1; gy <= 5; ++gy)
+    {
+        for (int gx = 1; gx <= 5; ++gx)
+        {
+            const GLint x = (surfaceWidth * gx) / 6;
+            const GLint y = (surfaceHeight * gy) / 6;
+            px[0] = px[1] = px[2] = px[3] = 0;
+
+            glReadPixels(x, y, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, px);
+
+            const unsigned int rgb =
+                    (unsigned int)px[0] +
+                    (unsigned int)px[1] +
+                    (unsigned int)px[2];
+
+            if (rgb > 12)
+                ++nonBlack;
+            if (rgb > maxRgb)
+                maxRgb = rgb;
+        }
+    }
+
+    GLenum err = glGetError();
+    BindFbo(GL_READ_FRAMEBUFFER, (GLuint)savedReadFbo);
+
+    if (nonBlackOut) *nonBlackOut = nonBlack;
+    if (maxRgbOut) *maxRgbOut = maxRgb;
+
+    return err == GL_NO_ERROR && nonBlack > 0;
+}
+
 static EGLBoolean eglSwapBuffers_V29_hook(EGLDisplay dpy, EGLSurface surface)
 {
     if (!eglSwapBuffers_V29_Original)
@@ -1204,11 +1343,44 @@ static EGLBoolean eglSwapBuffers_V29_hook(EGLDisplay dpy, EGLSurface surface)
         V30ProbeCurrentRenderTarget(
                 current, swapTid, fbo, viewport, width, height);
 
-        // V35: the V34 A/B proved FBO0 stays black when the V31 copy is disabled.
-        // Keep the known-good 3D presentation permanently enabled while testing
-        // the restored full 2D pipeline.
-        V31PresentOffscreenToDefault(
-                current, swapTid, fbo, viewport, width, height);
+        // V36: after RenderQueue::Flush(), first check whether GTA's own
+        // alt-target resolve + 2D path has produced a final image in FBO0.
+        // If yes, DO NOT overwrite it with the V31 3D-only copy.
+        // If FBO0 is still black, keep V31 as a safe fallback.
+        unsigned int v36NonBlack = 0;
+        unsigned int v36MaxRgb = 0;
+        const unsigned int v36FlushSeq =
+                g_v36RQFlushDone.load(std::memory_order_acquire);
+
+        // Ensure commands already executed by the graphics thread are complete
+        // before sampling the default framebuffer.
+        glFinish();
+
+        const bool v36NativeReady =
+                (v36FlushSeq > 0) &&
+                V36DefaultFboHasVisiblePixels(
+                        width, height, &v36NonBlack, &v36MaxRgb);
+
+        if (current <= 24 || (current % 120) == 0)
+        {
+            FLog("V36 PRESENT CHECK | swap=%u rqFlushSeq=%u fbo=%d fbo0NonBlack=%u maxRgb=%u nativeReady=%d",
+                 current, v36FlushSeq, (int)fbo,
+                 v36NonBlack, v36MaxRgb, v36NativeReady ? 1 : 0);
+        }
+
+        if (v36NativeReady)
+        {
+            if (current <= 24 || (current % 120) == 0)
+                FLog("V36 PRESENT | swap=%u mode=NATIVE_FBO0 skipV31=1", current);
+        }
+        else
+        {
+            if (current <= 24 || (current % 120) == 0)
+                FLog("V36 PRESENT | swap=%u mode=V31_FALLBACK", current);
+
+            V31PresentOffscreenToDefault(
+                    current, swapTid, fbo, viewport, width, height);
+        }
     }
 
     if (V29ShouldSamplePixels(current) &&
@@ -3622,7 +3794,7 @@ void InstallHooks()
         }
     }
 
-    FLog("V35 INSTALL: FULL_2D_PIPELINE + V31_BLIT_ALWAYS_ON");
+    FLog("V36 INSTALL: FULL_2D + RENDERQUEUE_FLUSH + NATIVE_FBO0_FIRST + V31_FALLBACK");
 
     g_v29EglSwapStub = shadowhook_hook_sym_name(
             "libEGL.so",
