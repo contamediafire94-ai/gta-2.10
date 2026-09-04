@@ -1,3 +1,4 @@
+#include <EGL/egl.h>
 #include <GLES2/gl2.h>
 #include <errno.h>
 #include <string.h>
@@ -402,15 +403,16 @@ void Render2dStuff()
 }
 
 // =============================================================================
-// V26 DIAGNOSTICO DA TELA PRETA
+// V28 DIAGNOSTICO / PROBE DA APRESENTACAO EGL
 //
-// V25 provou que o 3D, RenderWater, fading e emu_glEndInternal continuam
-// executando sem crash, mas a imagem final permanece preta.
+// A V27 provou que o jogo, CNetGame, spawn, TextDraws e o renderer continuam
+// ativos, mas o clear magenta executado dentro de Render2dStuff nao chega a
+// tela. Isso indica que Render2dStuff roda fora do contexto/surface EGL que e
+// realmente apresentado pelo Android.
 //
-// Esta versao NAO substitui mais Render2dStuff() inteiro por nossa copia
-// manual. Em vez disso, chama o Render2dStuff ORIGINAL do GTA por trampoline.
-// TextDraw/UI customizados ficam temporariamente fora deste teste para
-// descobrirmos se o framebuffer original volta a aparecer na tela.
+// Nesta versao o Render2dStuff volta a ser apenas observado. O teste magenta
+// foi movido para eglSwapBuffers(), o ultimo ponto antes da EGLSurface ser
+// apresentada na tela.
 // =============================================================================
 void (*Render2dStuff_V26_Original)();
 
@@ -428,7 +430,7 @@ void Render2dStuff_V26_hook()
     glGetIntegerv(GL_VIEWPORT, viewport);
 
     if (trace)
-        FLog("V27 FRAMEBUFFER BEFORE | seq=%u fbo=%d viewport=%d,%d,%d,%d",
+        FLog("V28 RENDER2D BEFORE | seq=%u fbo=%d viewport=%d,%d,%d,%d",
              current,
              (int)fboBefore,
              (int)viewport[0],
@@ -441,21 +443,131 @@ void Render2dStuff_V26_hook()
     glGetIntegerv(GL_FRAMEBUFFER_BINDING, &fboAfter);
 
     if (trace)
-        FLog("V27 FRAMEBUFFER AFTER ORIGINAL2D | seq=%u fbo=%d",
-             current, (int)fboAfter);
+        FLog("V28 RENDER2D AFTER | seq=%u fbo=%d", current, (int)fboAfter);
+}
 
-    // TESTE V27:
-    // força o framebuffer padrão (0) a ficar magenta.
-    // Se a tela ficar magenta, o Android/EGL está apresentando normalmente
-    // e o GTA está desenhando em outro framebuffer/target.
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    glDisable(GL_SCISSOR_TEST);
-    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
-    glClearColor(1.0f, 0.0f, 1.0f, 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT);
+// -----------------------------------------------------------------------------
+// V28: hook da apresentacao final EGL.
+// O hook e global em libEGL, mas so altera pixels depois que pNetGame existe.
+// Assim o launcher / splash nao sao afetados.
+// -----------------------------------------------------------------------------
+static EGLBoolean (*eglSwapBuffers_V28_Original)(EGLDisplay, EGLSurface) = nullptr;
+static void* g_v28EglSwapStub = nullptr;
+
+static EGLBoolean eglSwapBuffers_V28_hook(EGLDisplay dpy, EGLSurface surface)
+{
+    if (!eglSwapBuffers_V28_Original)
+        return EGL_FALSE;
+
+    // Antes de entrar no multiplayer, apenas repassa normalmente.
+    if (!pNetGame)
+        return eglSwapBuffers_V28_Original(dpy, surface);
+
+    static unsigned int seq = 0;
+    const unsigned int current = ++seq;
+    const bool trace = current <= 40;
+
+    EGLDisplay currentDisplay = eglGetCurrentDisplay();
+    EGLContext currentContext = eglGetCurrentContext();
+    EGLSurface currentDraw = eglGetCurrentSurface(EGL_DRAW);
+    EGLSurface currentRead = eglGetCurrentSurface(EGL_READ);
+
+    EGLint width = -1;
+    EGLint height = -1;
+    EGLBoolean qWidth = EGL_FALSE;
+    EGLBoolean qHeight = EGL_FALSE;
+
+    if (dpy != EGL_NO_DISPLAY && surface != EGL_NO_SURFACE)
+    {
+        qWidth = eglQuerySurface(dpy, surface, EGL_WIDTH, &width);
+        qHeight = eglQuerySurface(dpy, surface, EGL_HEIGHT, &height);
+    }
+
+    GLint fbo = -1;
+    GLint viewport[4] = {-1, -1, -1, -1};
+    GLenum glErrBefore = GL_NO_ERROR;
+
+    if (currentContext != EGL_NO_CONTEXT)
+    {
+        glErrBefore = glGetError();
+        glGetIntegerv(GL_FRAMEBUFFER_BINDING, &fbo);
+        glGetIntegerv(GL_VIEWPORT, viewport);
+    }
 
     if (trace)
-        FLog("V27 DEFAULT FBO MAGENTA CLEAR | seq=%u", current);
+    {
+        FLog("V28 EGLSWAP BEFORE | seq=%u dpy=%p surface=%p curDpy=%p ctx=%p draw=%p read=%p size=%dx%d q=%d/%d fbo=%d viewport=%d,%d,%d,%d glErr=0x%x",
+             current,
+             (void*)dpy,
+             (void*)surface,
+             (void*)currentDisplay,
+             (void*)currentContext,
+             (void*)currentDraw,
+             (void*)currentRead,
+             (int)width,
+             (int)height,
+             (int)qWidth,
+             (int)qHeight,
+             (int)fbo,
+             (int)viewport[0],
+             (int)viewport[1],
+             (int)viewport[2],
+             (int)viewport[3],
+             (unsigned int)glErrBefore);
+    }
+
+    // TESTE VISUAL V28:
+    // Durante os primeiros swaps do multiplayer, pinta o framebuffer 0
+    // imediatamente antes da apresentacao. Se o Android realmente estiver
+    // mostrando esta surface, a tela obrigatoriamente deve ficar magenta.
+    // Salvamos/restauramos o estado GL para nao contaminar o frame seguinte.
+    const bool canPaint =
+            current <= 120 &&
+            currentContext != EGL_NO_CONTEXT &&
+            currentDraw != EGL_NO_SURFACE &&
+            surface == currentDraw &&
+            width > 0 && height > 0;
+
+    if (canPaint)
+    {
+        GLint oldFbo = 0;
+        GLint oldViewport[4] = {0, 0, 0, 0};
+        GLboolean oldScissor = glIsEnabled(GL_SCISSOR_TEST);
+        GLboolean oldColorMask[4] = {GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE};
+        GLfloat oldClearColor[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+
+        glGetIntegerv(GL_FRAMEBUFFER_BINDING, &oldFbo);
+        glGetIntegerv(GL_VIEWPORT, oldViewport);
+        glGetBooleanv(GL_COLOR_WRITEMASK, oldColorMask);
+        glGetFloatv(GL_COLOR_CLEAR_VALUE, oldClearColor);
+
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        glViewport(0, 0, width, height);
+        glDisable(GL_SCISSOR_TEST);
+        glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+        glClearColor(1.0f, 0.0f, 1.0f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+
+        glBindFramebuffer(GL_FRAMEBUFFER, oldFbo);
+        glViewport(oldViewport[0], oldViewport[1], oldViewport[2], oldViewport[3]);
+        if (oldScissor) glEnable(GL_SCISSOR_TEST);
+        else glDisable(GL_SCISSOR_TEST);
+        glColorMask(oldColorMask[0], oldColorMask[1], oldColorMask[2], oldColorMask[3]);
+        glClearColor(oldClearColor[0], oldClearColor[1], oldClearColor[2], oldClearColor[3]);
+
+        if (trace)
+            FLog("V28 EGLSWAP MAGENTA CLEAR | seq=%u size=%dx%d",
+                 current, (int)width, (int)height);
+    }
+
+    EGLBoolean result = eglSwapBuffers_V28_Original(dpy, surface);
+    EGLint eglErr = eglGetError();
+
+    if (trace)
+        FLog("V28 EGLSWAP AFTER | seq=%u result=%d eglErr=0x%x",
+             current, (int)result, (unsigned int)eglErr);
+
+    return result;
 }
 
 /* =============================================================================== */
@@ -2739,7 +2851,6 @@ void InstallSpecialHooks()
 }
 
 
-#include <EGL/egl.h>
 #include <GLES2/gl2.h>   // If using OpenGL ES 2.0 or 3.0
 
 void InstallHooks()
@@ -2801,7 +2912,17 @@ void InstallHooks()
         }
     }
 
-    FLog("V27 INSTALL: default framebuffer magenta presentation probe");
+    FLog("V28 INSTALL: eglSwapBuffers presentation probe");
+
+    g_v28EglSwapStub = shadowhook_hook_sym_name(
+            "libEGL.so",
+            "eglSwapBuffers",
+            (void*)eglSwapBuffers_V28_hook,
+            (void**)&eglSwapBuffers_V28_Original);
+
+    FLog("V28 EGLSWAP HOOK | stub=%p original=%p",
+         g_v28EglSwapStub, (void*)eglSwapBuffers_V28_Original);
+
     CHook::InlineHook("_Z17emu_glEndInternalv", (uintptr_t)emu_glEndInternal_hook, (uintptr_t*)&emu_glEndInternal); // V24 diagnostic
 
     CHook::Redirect("_ZN4CHID12GetInputTypeEv", &GetInputType);
