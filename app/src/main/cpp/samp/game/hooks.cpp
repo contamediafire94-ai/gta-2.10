@@ -308,6 +308,16 @@ void ShowHud()
 //extern CJavaWrapper* pJavaWrapper;
 void Render2dStuff()
 {
+    static bool v35Full2DLogged = false;
+    if (!v35Full2DLogged)
+    {
+        v35Full2DLogged = true;
+        FLog("V35 FULL2D ACTIVE | tid=%d ctx=%p draw=%p",
+             (int)syscall(SYS_gettid),
+             (void*)eglGetCurrentContext(),
+             (void*)eglGetCurrentSurface(EGL_DRAW));
+    }
+
     static unsigned int v21TwoDSeq = 0;
     const unsigned int v21TwoDCurrent = ++v21TwoDSeq;
     const bool v21TraceTwoD = v21TwoDCurrent <= 8;
@@ -1194,44 +1204,11 @@ static EGLBoolean eglSwapBuffers_V29_hook(EGLDisplay dpy, EGLSurface surface)
         V30ProbeCurrentRenderTarget(
                 current, swapTid, fbo, viewport, width, height);
 
-        // V34 A/B: change ONLY the final V31 present blit.
-        // Count frames only once the real offscreen scene target is active,
-        // so the A/B windows begin at the useful in-game render stage.
-        const unsigned int eligible =
-                g_v34EligiblePresentFrames.fetch_add(1, std::memory_order_relaxed) + 1;
-        const int phase = V34PhaseForEligibleFrame(eligible);
-        const int previousPhase =
-                g_v34LastPhase.exchange(phase, std::memory_order_relaxed);
-
-        if (phase != previousPhase)
-        {
-            FLog("V34 PHASE | phase=%s swap=%u eligible=%u fbo=%d viewport=%dx%d surface=%dx%d tid=%d ctx=%p",
-                 V34PhaseName(phase), current, eligible, (int)fbo,
-                 (int)viewport[2], (int)viewport[3],
-                 (int)width, (int)height, swapTid, (void*)currentContext);
-        }
-
-        if (phase == 2)
-        {
-            // B phase: deliberately do NOT touch FBO0 with the V31 scene copy.
-            // We still present normally with eglSwapBuffers below.
-            if (eligible == 361 || eligible == 420 || eligible == 480 ||
-                eligible == 540 || eligible == 600 || eligible == 660 ||
-                eligible == 720)
-            {
-                V34ProbeRawDefaultFbo(current, eligible, width, height);
-                FLog("V34 NO_BLIT | swap=%u eligible=%u srcFbo=%d src=%dx%d dstSurface=%dx%d",
-                     current, eligible, (int)fbo,
-                     (int)viewport[2], (int)viewport[3],
-                     (int)width, (int)height);
-            }
-        }
-        else
-        {
-            // A and C phases keep the known-good V31 scene presentation.
-            V31PresentOffscreenToDefault(
-                    current, swapTid, fbo, viewport, width, height);
-        }
+        // V35: the V34 A/B proved FBO0 stays black when the V31 copy is disabled.
+        // Keep the known-good 3D presentation permanently enabled while testing
+        // the restored full 2D pipeline.
+        V31PresentOffscreenToDefault(
+                current, swapTid, fbo, viewport, width, height);
     }
 
     if (V29ShouldSamplePixels(current) &&
@@ -3587,10 +3564,10 @@ void InstallHooks()
 {
     CHook::InlineHook("_ZN7CCamera4FadeEfs", &CCamera__Fade_V12_hook, &CCamera__Fade_V12_Original);
     CHook::InlineHook("_ZN14CRunningScript7ProcessEv", &CRunningScript__Process_hook, &CRunningScript__Process);
-    // V26: usar o Render2dStuff original do GTA para isolar a tela preta.
-    CHook::InlineHook("_Z13Render2dStuffv",
-                      &Render2dStuff_V26_hook,
-                      &Render2dStuff_V26_Original);
+    // V35: restore the source's complete SA-MP/GTA 2D pipeline.
+    // V26 temporarily replaced this with GTA's original Render2dStuff only
+    // while the black-screen/FBO problem was being isolated.
+    CHook::Redirect("_Z13Render2dStuffv", &Render2dStuff);
     CHook::InlineHook("_Z13RenderEffectsv",
                       &RenderEffects_V30_hook,
                       &RenderEffects_V30_Original);
@@ -3645,7 +3622,7 @@ void InstallHooks()
         }
     }
 
-    FLog("V34 INSTALL: A=BLIT_ON(360) B=NO_BLIT(360) C=BLIT_ON + V33 TextDraw/UI");
+    FLog("V35 INSTALL: FULL_2D_PIPELINE + V31_BLIT_ALWAYS_ON");
 
     g_v29EglSwapStub = shadowhook_hook_sym_name(
             "libEGL.so",
