@@ -183,47 +183,35 @@ void RenderEffects() {
 }
 
 // =============================================================================
-// V30 A/B CONTROLADO DO RenderEffects
+// V31: manter RenderEffects customizado fixo durante o teste do blit.
 //
-// Fase 0: preserva exatamente o RenderEffects customizado usado na V29.
-// Depois de 30 chamadas conectadas, troca uma unica vez para o RenderEffects
-// ORIGINAL do GTA via trampoline. O swap probe registra a fase atual para
-// correlacionar qualquer mudanca de FBO/pixels com essa transicao.
+// A V30 provou que trocar para o RenderEffects original nao restaura o FBO0.
+// Para a V31 medir somente a correcao de apresentacao, removemos a alternancia
+// A/B e preservamos o comportamento customizado que vinha sendo usado antes.
 // =============================================================================
 static void (*RenderEffects_V30_Original)() = nullptr;
 static std::atomic<unsigned int> g_v30EffectsConnectedCount{0};
-static std::atomic<int> g_v30EffectsPhase{0}; // 0=custom V29, 1=original GTA
+static std::atomic<int> g_v30EffectsPhase{0}; // V31: permanece 0 (custom)
 
 static void RenderEffects_V30_hook()
 {
     const bool connected =
             pNetGame && pNetGame->GetGameState() == GAMESTATE_CONNECTED;
 
-    // Antes da conexao mantemos o comportamento da V29 para nao alterar
-    // bootstrap/loading por causa deste A/B.
-    if (!connected)
+    if (connected)
     {
-        RenderEffects();
-        return;
+        const unsigned int n =
+                g_v30EffectsConnectedCount.fetch_add(1, std::memory_order_relaxed) + 1;
+        if (n == 1)
+        {
+            FLog("V31 EFFECTS MODE | CUSTOM_FIXED tid=%d ctx=%p original=%p",
+                 (int)syscall(SYS_gettid), (void*)eglGetCurrentContext(),
+                 (void*)RenderEffects_V30_Original);
+        }
     }
 
-    const unsigned int n =
-            g_v30EffectsConnectedCount.fetch_add(1, std::memory_order_relaxed) + 1;
-
-    if (n <= 30 || !RenderEffects_V30_Original)
-    {
-        g_v30EffectsPhase.store(0, std::memory_order_relaxed);
-        RenderEffects();
-        return;
-    }
-
-    if (g_v30EffectsPhase.exchange(1, std::memory_order_relaxed) == 0)
-    {
-        FLog("V30 EFFECTS SWITCH | connectedCall=%u mode=ORIGINAL_GTA tid=%d ctx=%p",
-             n, (int)syscall(SYS_gettid), (void*)eglGetCurrentContext());
-    }
-
-    RenderEffects_V30_Original();
+    g_v30EffectsPhase.store(0, std::memory_order_relaxed);
+    RenderEffects();
 }
 
 /*void MainLoop();
@@ -825,6 +813,196 @@ static void V30ProbeCurrentRenderTarget(
          (unsigned int)defaultErr);
 }
 
+
+#ifndef GL_READ_FRAMEBUFFER
+#define GL_READ_FRAMEBUFFER 0x8CA8
+#endif
+#ifndef GL_DRAW_FRAMEBUFFER
+#define GL_DRAW_FRAMEBUFFER 0x8CA9
+#endif
+#ifndef GL_READ_FRAMEBUFFER_BINDING
+#define GL_READ_FRAMEBUFFER_BINDING 0x8CAA
+#endif
+#ifndef GL_DRAW_FRAMEBUFFER_BINDING
+#define GL_DRAW_FRAMEBUFFER_BINDING 0x8CA6
+#endif
+
+typedef void (*V31BlitFramebufferFn)(
+        GLint srcX0, GLint srcY0, GLint srcX1, GLint srcY1,
+        GLint dstX0, GLint dstY0, GLint dstX1, GLint dstY1,
+        GLbitfield mask, GLenum filter);
+
+static V31BlitFramebufferFn g_v31BlitFramebuffer = nullptr;
+static std::atomic<unsigned int> g_v31BlitAttempts{0};
+static std::atomic<unsigned int> g_v31BlitSuccess{0};
+
+static bool V31PresentOffscreenToDefault(
+        unsigned int swapSeq,
+        int swapTid,
+        GLint sourceFbo,
+        const GLint sourceViewport[4],
+        EGLint surfaceWidth,
+        EGLint surfaceHeight)
+{
+    if (sourceFbo <= 0 ||
+        sourceViewport[2] <= 8 || sourceViewport[3] <= 8 ||
+        surfaceWidth <= 8 || surfaceHeight <= 8)
+        return false;
+
+    if (!g_v31BlitFramebuffer)
+    {
+        g_v31BlitFramebuffer =
+                reinterpret_cast<V31BlitFramebufferFn>(
+                        eglGetProcAddress("glBlitFramebuffer"));
+
+        FLog("V31 BLIT PROC | ptr=%p tid=%d ctx=%p",
+             (void*)g_v31BlitFramebuffer, swapTid, (void*)eglGetCurrentContext());
+
+        if (!g_v31BlitFramebuffer)
+            return false;
+    }
+
+    // O FBO atual (sourceFbo) foi confirmado pela V30 como o render target da cena.
+    while (glGetError() != GL_NO_ERROR) {}
+
+    GLenum sourceStatus = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+    GLenum statusErr = glGetError();
+
+    if (sourceStatus != GL_FRAMEBUFFER_COMPLETE || statusErr != GL_NO_ERROR)
+    {
+        static unsigned int badStatusLogs = 0;
+        if (badStatusLogs++ < 8)
+        {
+            FLog("V31 BLIT SKIP | seq=%u reason=source_status fbo=%d status=0x%x err=0x%x",
+                 swapSeq, (int)sourceFbo,
+                 (unsigned int)sourceStatus, (unsigned int)statusErr);
+        }
+        return false;
+    }
+
+    GLint savedReadFbo = sourceFbo;
+    GLint savedDrawFbo = sourceFbo;
+    GLint savedViewport[4] = {
+            sourceViewport[0], sourceViewport[1],
+            sourceViewport[2], sourceViewport[3]
+    };
+    GLboolean savedScissor = glIsEnabled(GL_SCISSOR_TEST);
+    GLint savedScissorBox[4] = {0, 0, 0, 0};
+    glGetIntegerv(GL_SCISSOR_BOX, savedScissorBox);
+
+    // ES3 separa READ e DRAW FBO. Se a consulta falhar, os defaults acima
+    // ainda restauram o FBO observado imediatamente antes do swap.
+    while (glGetError() != GL_NO_ERROR) {}
+    glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &savedReadFbo);
+    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &savedDrawFbo);
+    GLenum bindingQueryErr = glGetError();
+    if (bindingQueryErr != GL_NO_ERROR)
+    {
+        savedReadFbo = sourceFbo;
+        savedDrawFbo = sourceFbo;
+    }
+
+    auto BindFbo = [](GLenum target, GLuint fbo)
+    {
+        if (glBindFramebuffer_V29_Original)
+            glBindFramebuffer_V29_Original(target, fbo);
+        else
+            glBindFramebuffer(target, fbo);
+    };
+
+    const unsigned int attempt =
+            g_v31BlitAttempts.fetch_add(1, std::memory_order_relaxed) + 1;
+
+    while (glGetError() != GL_NO_ERROR) {}
+
+    BindFbo(GL_READ_FRAMEBUFFER, (GLuint)sourceFbo);
+    BindFbo(GL_DRAW_FRAMEBUFFER, 0);
+
+    GLenum readStatus = glCheckFramebufferStatus(GL_READ_FRAMEBUFFER);
+    GLenum drawStatus = glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER);
+    GLenum preBlitErr = glGetError();
+
+    if (readStatus != GL_FRAMEBUFFER_COMPLETE ||
+        drawStatus != GL_FRAMEBUFFER_COMPLETE ||
+        preBlitErr != GL_NO_ERROR)
+    {
+        if (attempt <= 12)
+        {
+            FLog("V31 BLIT SKIP | seq=%u attempt=%u reason=split_status src=%d read=0x%x draw=0x%x err=0x%x",
+                 swapSeq, attempt, (int)sourceFbo,
+                 (unsigned int)readStatus, (unsigned int)drawStatus,
+                 (unsigned int)preBlitErr);
+        }
+
+        BindFbo(GL_READ_FRAMEBUFFER, (GLuint)savedReadFbo);
+        BindFbo(GL_DRAW_FRAMEBUFFER, (GLuint)savedDrawFbo);
+        glViewport(savedViewport[0], savedViewport[1],
+                   savedViewport[2], savedViewport[3]);
+        if (savedScissor) glEnable(GL_SCISSOR_TEST);
+        else glDisable(GL_SCISSOR_TEST);
+        glScissor(savedScissorBox[0], savedScissorBox[1],
+                  savedScissorBox[2], savedScissorBox[3]);
+        return false;
+    }
+
+    // Scissor pode limitar o destino do blit. Desativamos somente durante a
+    // copia e restauramos logo em seguida.
+    glDisable(GL_SCISSOR_TEST);
+
+    g_v31BlitFramebuffer(
+            0, 0, sourceViewport[2], sourceViewport[3],
+            0, 0, surfaceWidth, surfaceHeight,
+            GL_COLOR_BUFFER_BIT, GL_NEAREST);
+
+    GLenum blitErr = glGetError();
+
+    // Confirma alguns pixels do FBO0 apenas nos primeiros frames do teste.
+    GLubyte defaultPx[5][4] = {};
+    GLenum readbackErr = GL_NO_ERROR;
+    bool didReadback = false;
+    if (attempt <= 8)
+    {
+        // glReadPixels le o READ_FRAMEBUFFER em ES3. Troca apenas a leitura
+        // para o FBO0 para confirmar que o blit realmente chegou na Surface.
+        BindFbo(GL_READ_FRAMEBUFFER, 0);
+        V30ReadFivePixels(surfaceWidth, surfaceHeight, defaultPx, &readbackErr);
+        didReadback = true;
+    }
+
+    BindFbo(GL_READ_FRAMEBUFFER, (GLuint)savedReadFbo);
+    BindFbo(GL_DRAW_FRAMEBUFFER, (GLuint)savedDrawFbo);
+    glViewport(savedViewport[0], savedViewport[1],
+               savedViewport[2], savedViewport[3]);
+    if (savedScissor) glEnable(GL_SCISSOR_TEST);
+    else glDisable(GL_SCISSOR_TEST);
+    glScissor(savedScissorBox[0], savedScissorBox[1],
+              savedScissorBox[2], savedScissorBox[3]);
+
+    GLenum restoreErr = glGetError();
+
+    if (blitErr == GL_NO_ERROR)
+        g_v31BlitSuccess.fetch_add(1, std::memory_order_relaxed);
+
+    if (attempt <= 12 || (swapSeq % 120) == 0)
+    {
+        FLog("V31 BLIT | seq=%u attempt=%u tid=%d srcFbo=%d src=%dx%d dstFbo=0 dst=%dx%d readStatus=0x%x drawStatus=0x%x blitErr=0x%x readback=%d p0=%u,%u,%u,%u p1=%u,%u,%u,%u p2=%u,%u,%u,%u p3=%u,%u,%u,%u p4=%u,%u,%u,%u readErr=0x%x restoreErr=0x%x successTotal=%u",
+             swapSeq, attempt, swapTid, (int)sourceFbo,
+             (int)sourceViewport[2], (int)sourceViewport[3],
+             (int)surfaceWidth, (int)surfaceHeight,
+             (unsigned int)readStatus, (unsigned int)drawStatus,
+             (unsigned int)blitErr, didReadback ? 1 : 0,
+             defaultPx[0][0], defaultPx[0][1], defaultPx[0][2], defaultPx[0][3],
+             defaultPx[1][0], defaultPx[1][1], defaultPx[1][2], defaultPx[1][3],
+             defaultPx[2][0], defaultPx[2][1], defaultPx[2][2], defaultPx[2][3],
+             defaultPx[3][0], defaultPx[3][1], defaultPx[3][2], defaultPx[3][3],
+             defaultPx[4][0], defaultPx[4][1], defaultPx[4][2], defaultPx[4][3],
+             (unsigned int)readbackErr, (unsigned int)restoreErr,
+             g_v31BlitSuccess.load(std::memory_order_relaxed));
+    }
+
+    return blitErr == GL_NO_ERROR;
+}
+
 static EGLBoolean eglSwapBuffers_V29_hook(EGLDisplay dpy, EGLSurface surface)
 {
     if (!eglSwapBuffers_V29_Original)
@@ -909,6 +1087,11 @@ static EGLBoolean eglSwapBuffers_V29_hook(EGLDisplay dpy, EGLSurface surface)
         fbo > 0)
     {
         V30ProbeCurrentRenderTarget(
+                current, swapTid, fbo, viewport, width, height);
+
+        // V31: a V30 provou que este FBO contem a cena e que o FBO0 esta preto.
+        // Fazemos a copia final imediatamente antes da apresentacao.
+        V31PresentOffscreenToDefault(
                 current, swapTid, fbo, viewport, width, height);
     }
 
@@ -3272,7 +3455,7 @@ void InstallHooks()
     CHook::InlineHook("_Z13RenderEffectsv",
                       &RenderEffects_V30_hook,
                       &RenderEffects_V30_Original);
-    FLog("V30 EFFECTS HOOK | original=%p", (void*)RenderEffects_V30_Original);
+    FLog("V31 EFFECTS HOOK | mode=CUSTOM_FIXED original=%p", (void*)RenderEffects_V30_Original);
     CHook::InlineHook("_Z14AND_TouchEventiiii", &AND_TouchEvent_hook, &AND_TouchEvent);
 	
     CHook::Redirect("_ZN11CHudColours12GetIntColourEh", &CHudColours__GetIntColour); // dangerous
@@ -3323,7 +3506,7 @@ void InstallHooks()
         }
     }
 
-    FLog("V30 INSTALL: FBO2 content + RenderEffects A/B probe");
+    FLog("V31 INSTALL: FBO2 -> FBO0 guarded blit test");
 
     g_v29EglSwapStub = shadowhook_hook_sym_name(
             "libEGL.so",
