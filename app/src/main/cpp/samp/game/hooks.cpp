@@ -323,13 +323,19 @@ void ShowHud()
 static std::atomic<bool> g_v37TwoDInProgress{false};
 static std::atomic<unsigned int> g_v37TwoDCompleted{0};
 
+// V38: real cross-thread exclusion. The producer owns this mutex while it
+// submits the complete 2D pass. The EGL/swap thread only performs the V31
+// copy when it can own the same mutex, which makes a mid-TextDraw/UI blit
+// impossible.
+static pthread_mutex_t g_v38TwoDPresentMutex = PTHREAD_MUTEX_INITIALIZER;
+
 void Render2dStuff()
 {
     static bool v35Full2DLogged = false;
     if (!v35Full2DLogged)
     {
         v35Full2DLogged = true;
-        FLog("V37 FULL2D ACTIVE | tid=%d ctx=%p draw=%p",
+        FLog("V38 FULL2D ACTIVE | tid=%d ctx=%p draw=%p",
              (int)syscall(SYS_gettid),
              (void*)eglGetCurrentContext(),
              (void*)eglGetCurrentSurface(EGL_DRAW));
@@ -339,7 +345,12 @@ void Render2dStuff()
     const unsigned int v21TwoDCurrent = ++v21TwoDSeq;
     const bool v21TraceTwoD = v21TwoDCurrent <= 8;
 
+    pthread_mutex_lock(&g_v38TwoDPresentMutex);
     g_v37TwoDInProgress.store(true, std::memory_order_release);
+
+    if (v21TraceTwoD)
+        FLog("V38 2D MUTEX LOCK | seq=%u tid=%d",
+             v21TwoDCurrent, (int)syscall(SYS_gettid));
 
     if (v21TraceTwoD)
     {
@@ -473,10 +484,16 @@ void Render2dStuff()
 
     if (v21TraceTwoD)
     {
-        FLog("V37 2D COMPLETE | seq=%u tid=%d",
+        FLog("V38 2D COMPLETE | seq=%u tid=%d",
              v21TwoDCurrent, (int)syscall(SYS_gettid));
         FLog("V21 2D END | seq=%u", v21TwoDCurrent);
     }
+
+    pthread_mutex_unlock(&g_v38TwoDPresentMutex);
+
+    if (v21TraceTwoD)
+        FLog("V38 2D MUTEX UNLOCK | seq=%u tid=%d",
+             v21TwoDCurrent, (int)syscall(SYS_gettid));
 }
 
 // =============================================================================
@@ -1240,55 +1257,43 @@ static EGLBoolean eglSwapBuffers_V29_hook(EGLDisplay dpy, EGLSurface surface)
         currentDraw == surface &&
         fbo > 0)
     {
-        V30ProbeCurrentRenderTarget(
-                current, swapTid, fbo, viewport, width, height);
-
-        const bool v37In2DNow =
-                g_v37TwoDInProgress.load(std::memory_order_acquire);
-        const unsigned int v37CompletedNow =
+        // V38: use a real mutex rather than racing atomic snapshots.
+        // trylock means the swap thread never waits for the producer. If 2D is
+        // active, skip the manual copy for this frame. If we get the lock, the
+        // producer cannot begin a new TextDraw/UI pass until the blit is done.
+        const int v38LockResult = pthread_mutex_trylock(&g_v38TwoDPresentMutex);
+        const bool v38OwnsPresentLock = (v38LockResult == 0);
+        const unsigned int v38Completed =
                 g_v37TwoDCompleted.load(std::memory_order_acquire);
 
-        // If producer-side 2D was active when this swap started, is active now,
-        // or completed while we were already inside this swap, this swap can be
-        // older than the just-submitted TextDraw/UI commands. Do not overwrite
-        // FBO0 with a premature FBO2 copy. Let the real swap finish and use the
-        // next ordered swap.
-        const bool v37Defer =
-                v37In2DAtEntry ||
-                v37In2DNow ||
-                (v37CompletedNow != v37CompletedAtEntry);
-
-        if (current <= 40 || (current % 120) == 0 || v37Defer)
-        {
-            FLog("V37 PRESENT CHECK | swap=%u tid=%d in2DEntry=%d in2DNow=%d completedEntry=%u completedNow=%u fbo=%d defer=%d",
-                 current, swapTid,
-                 v37In2DAtEntry ? 1 : 0,
-                 v37In2DNow ? 1 : 0,
-                 v37CompletedAtEntry,
-                 v37CompletedNow,
-                 (int)fbo,
-                 v37Defer ? 1 : 0);
-        }
-
-        if (v37Defer)
+        if (!v38OwnsPresentLock)
         {
             if (current <= 40 || (current % 120) == 0)
-                FLog("V37 PRESENT DEFER | swap=%u reason=2D_ORDERING", current);
+            {
+                FLog("V38 PRESENT DEFER | swap=%u tid=%d completed=%u mutex=%d reason=2D_BUSY",
+                     current, swapTid, v38Completed, v38LockResult);
+            }
         }
         else
         {
-            // Safe here: valid EGL context on the graphics/swap thread.
-            // Finish only GL commands already issued on THIS context; no
-            // private GTA RenderQueue calls are made.
+            V30ProbeCurrentRenderTarget(
+                    current, swapTid, fbo, viewport, width, height);
+
+            // The producer is excluded for the entire finish+copy window.
             glFinish();
-            const GLenum v37FinishErr = glGetError();
+            const GLenum v38FinishErr = glGetError();
 
             if (current <= 40 || (current % 120) == 0)
-                FLog("V37 PRESENT BLIT | swap=%u completed=%u glFinishErr=0x%x",
-                     current, v37CompletedNow, (unsigned int)v37FinishErr);
+            {
+                FLog("V38 PRESENT BLIT | swap=%u tid=%d completed=%u glFinishErr=0x%x mutex=OWNED",
+                     current, swapTid, v38Completed,
+                     (unsigned int)v38FinishErr);
+            }
 
             V31PresentOffscreenToDefault(
                     current, swapTid, fbo, viewport, width, height);
+
+            pthread_mutex_unlock(&g_v38TwoDPresentMutex);
         }
     }
 
@@ -3703,7 +3708,7 @@ void InstallHooks()
         }
     }
 
-    FLog("V37 INSTALL: FULL_2D + SAFE_PRESENT_HANDSHAKE + V31_FALLBACK");
+    FLog("V38 INSTALL: FULL_2D + MUTEX_PRESENT_SERIALIZATION + V31_FALLBACK");
 
     g_v29EglSwapStub = shadowhook_hook_sym_name(
             "libEGL.so",
