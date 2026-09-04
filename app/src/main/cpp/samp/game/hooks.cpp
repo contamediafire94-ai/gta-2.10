@@ -861,6 +861,86 @@ static V31BlitFramebufferFn g_v31BlitFramebuffer = nullptr;
 static std::atomic<unsigned int> g_v31BlitAttempts{0};
 static std::atomic<unsigned int> g_v31BlitSuccess{0};
 
+// V34: controlled A/B test for the final scene blit.
+// A: keep the proven V31 FBO2 -> FBO0 blit for 360 valid offscreen frames.
+// B: skip ONLY that blit for the next 360 valid offscreen frames.
+// C: restore the V31 blit indefinitely.
+// Nothing else in the render, camera, network or TextDraw path is changed.
+static std::atomic<unsigned int> g_v34EligiblePresentFrames{0};
+static std::atomic<int> g_v34LastPhase{0};
+
+static const char* V34PhaseName(int phase)
+{
+    switch (phase)
+    {
+        case 1: return "A_BLIT_ON";
+        case 2: return "B_NO_BLIT";
+        case 3: return "C_BLIT_ON";
+        default: return "UNKNOWN";
+    }
+}
+
+static int V34PhaseForEligibleFrame(unsigned int frame)
+{
+    if (frame <= 360) return 1;
+    if (frame <= 720) return 2;
+    return 3;
+}
+
+static void V34ProbeRawDefaultFbo(
+        unsigned int swapSeq,
+        unsigned int eligibleFrame,
+        EGLint surfaceWidth,
+        EGLint surfaceHeight)
+{
+    if (surfaceWidth <= 8 || surfaceHeight <= 8)
+        return;
+
+    GLint savedReadFbo = 0;
+    while (glGetError() != GL_NO_ERROR) {}
+    glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &savedReadFbo);
+    GLenum queryErr = glGetError();
+
+    auto BindFbo = [](GLenum target, GLuint fbo)
+    {
+        if (glBindFramebuffer_V29_Original)
+            glBindFramebuffer_V29_Original(target, fbo);
+        else
+            glBindFramebuffer(target, fbo);
+    };
+
+    BindFbo(GL_READ_FRAMEBUFFER, 0);
+
+    unsigned int nonBlack = 0;
+    unsigned int maxRgb = 0;
+    unsigned int alphaNonZero = 0;
+    GLubyte px[4] = {};
+
+    while (glGetError() != GL_NO_ERROR) {}
+    for (int gy = 1; gy <= 5; ++gy)
+    {
+        for (int gx = 1; gx <= 5; ++gx)
+        {
+            const GLint x = (surfaceWidth * gx) / 6;
+            const GLint y = (surfaceHeight * gy) / 6;
+            px[0] = px[1] = px[2] = px[3] = 0;
+            glReadPixels(x, y, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, px);
+            const unsigned int rgb = (unsigned int)px[0] + px[1] + px[2];
+            if (rgb > 12) ++nonBlack;
+            if (rgb > maxRgb) maxRgb = rgb;
+            if (px[3] != 0) ++alphaNonZero;
+        }
+    }
+    GLenum readErr = glGetError();
+
+    BindFbo(GL_READ_FRAMEBUFFER, (GLuint)savedReadFbo);
+    GLenum restoreErr = glGetError();
+
+    FLog("V34 RAW FBO0 | swap=%u eligible=%u grid=25 nonBlack=%u maxRgb=%u alphaNonZero=%u queryErr=0x%x readErr=0x%x restoreErr=0x%x",
+         swapSeq, eligibleFrame, nonBlack, maxRgb, alphaNonZero,
+         (unsigned int)queryErr, (unsigned int)readErr, (unsigned int)restoreErr);
+}
+
 static bool V31PresentOffscreenToDefault(
         unsigned int swapSeq,
         int swapTid,
@@ -1114,10 +1194,44 @@ static EGLBoolean eglSwapBuffers_V29_hook(EGLDisplay dpy, EGLSurface surface)
         V30ProbeCurrentRenderTarget(
                 current, swapTid, fbo, viewport, width, height);
 
-        // V31: a V30 provou que este FBO contem a cena e que o FBO0 esta preto.
-        // Fazemos a copia final imediatamente antes da apresentacao.
-        V31PresentOffscreenToDefault(
-                current, swapTid, fbo, viewport, width, height);
+        // V34 A/B: change ONLY the final V31 present blit.
+        // Count frames only once the real offscreen scene target is active,
+        // so the A/B windows begin at the useful in-game render stage.
+        const unsigned int eligible =
+                g_v34EligiblePresentFrames.fetch_add(1, std::memory_order_relaxed) + 1;
+        const int phase = V34PhaseForEligibleFrame(eligible);
+        const int previousPhase =
+                g_v34LastPhase.exchange(phase, std::memory_order_relaxed);
+
+        if (phase != previousPhase)
+        {
+            FLog("V34 PHASE | phase=%s swap=%u eligible=%u fbo=%d viewport=%dx%d surface=%dx%d tid=%d ctx=%p",
+                 V34PhaseName(phase), current, eligible, (int)fbo,
+                 (int)viewport[2], (int)viewport[3],
+                 (int)width, (int)height, swapTid, (void*)currentContext);
+        }
+
+        if (phase == 2)
+        {
+            // B phase: deliberately do NOT touch FBO0 with the V31 scene copy.
+            // We still present normally with eglSwapBuffers below.
+            if (eligible == 361 || eligible == 420 || eligible == 480 ||
+                eligible == 540 || eligible == 600 || eligible == 660 ||
+                eligible == 720)
+            {
+                V34ProbeRawDefaultFbo(current, eligible, width, height);
+                FLog("V34 NO_BLIT | swap=%u eligible=%u srcFbo=%d src=%dx%d dstSurface=%dx%d",
+                     current, eligible, (int)fbo,
+                     (int)viewport[2], (int)viewport[3],
+                     (int)width, (int)height);
+            }
+        }
+        else
+        {
+            // A and C phases keep the known-good V31 scene presentation.
+            V31PresentOffscreenToDefault(
+                    current, swapTid, fbo, viewport, width, height);
+        }
     }
 
     if (V29ShouldSamplePixels(current) &&
@@ -3531,7 +3645,7 @@ void InstallHooks()
         }
     }
 
-    FLog("V33 INSTALL: V31 blit + SA-MP TextDraw/UI restore");
+    FLog("V34 INSTALL: A=BLIT_ON(360) B=NO_BLIT(360) C=BLIT_ON + V33 TextDraw/UI");
 
     g_v29EglSwapStub = shadowhook_hook_sym_name(
             "libEGL.so",
