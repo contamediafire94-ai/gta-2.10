@@ -119,8 +119,23 @@ void CRQ_Commands::rqVertexBufferSelect(uintptr_t **qData)
 }
 
 void CRQ_Commands::InjectHooks() {
-   // bool (&RQCaps)[16] = *(bool(*)[16])0xA9B0C8;
+    // V41 DIAGNOSTICO:
+    //
+    // O implementacao custom abaixo estava substituindo a funcao original
+    // RQ_Command_rqVertexBufferSelect do GTA. O codigo custom faz:
+    //
+    //     glBindBuffer(GL_ARRAY_BUFFER, buffer + 8);
+    //
+    // Mas ES2VertexBuffer possui o GLuint bufferId NO OFFSET +8.
+    // Portanto "buffer + 8" nao e o bufferId; e apenas uma soma numerica
+    // sobre o valor lido da fila.
+    //
+    // Para este teste, preservamos a implementacao ORIGINAL do GTA.
+    // Isso isola completamente o seletor de vertex buffer custom sem tocar
+    // no V31, FBO, camera, rede, TextDraw ou restante do pipeline.
+    FLog("V41 RQ: ORIGINAL GTA rqVertexBufferSelect PRESERVED - custom redirect DISABLED");
 
-
-    CHook::Redirect("_Z31RQ_Command_rqVertexBufferSelectRPc", &CRQ_Commands::rqVertexBufferSelect);
+    // V41: NAO REDIRECIONAR.
+    // CHook::Redirect("_Z31RQ_Command_rqVertexBufferSelectRPc",
+    //                 &CRQ_Commands::rqVertexBufferSelect);
 }
