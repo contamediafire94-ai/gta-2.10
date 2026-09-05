@@ -35,6 +35,7 @@ public class SAMP extends GTASA implements
     private native void initializeSAMP();
     private native void nativeAllowNetworkInit();
     private native void setLauncherNickname(String nickname);
+    private native void setLauncherServer(String serverAddress);
     private native void onInputEnd(byte[] str);
     public native void onEventBackPressed();
 
@@ -223,6 +224,7 @@ public class SAMP extends GTASA implements
         hideSystemUI();
 
         String nickname = getIntent().getStringExtra("nickname");
+        String serverAddress = getIntent().getStringExtra("server_address");
 
         mKeyboard = new CustomKeyboard(this);
         mDialog = new DialogManager(this);
@@ -248,6 +250,15 @@ public class SAMP extends GTASA implements
                 if (!nickname.isEmpty()) {
                     Log.i(TAG, "Nickname recebido do launcher: " + nickname);
                     setLauncherNickname(nickname);
+                }
+            }
+
+            if (serverAddress != null) {
+                serverAddress = serverAddress.trim();
+
+                if (!serverAddress.isEmpty()) {
+                    Log.i(TAG, "Servidor recebido do launcher: " + serverAddress);
+                    setLauncherServer(serverAddress);
                 }
             }
 
