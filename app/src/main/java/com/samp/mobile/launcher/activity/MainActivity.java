@@ -15,6 +15,7 @@ import android.widget.Toast;
 import androidx.appcompat.app.AppCompatActivity;
 
 import com.samp.mobile.R;
+import com.samp.mobile.game.SAMP;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -27,6 +28,7 @@ public class MainActivity extends AppCompatActivity {
     private static final String PREF_DATA_READY = "dz6_data_imported";
 
     private EditText editNick;
+    private EditText editServer;
     private SharedPreferences prefs;
     private ProgressDialog importDialog;
 
@@ -36,12 +38,15 @@ public class MainActivity extends AppCompatActivity {
         setContentView(R.layout.activity_main);
 
         editNick = findViewById(R.id.edit_nick);
+        editServer = findViewById(R.id.edit_server);
         Button jogar = findViewById(R.id.button_play);
 
         prefs = getSharedPreferences("beta_tester_config", MODE_PRIVATE);
 
         String nickSalvo = prefs.getString("nickname", "");
+        String servidorSalvo = prefs.getString("server_address", "179.198.105.167:7125");
         editNick.setText(nickSalvo);
+        editServer.setText(servidorSalvo);
 
         // Compatibilidade com as builds anteriores, que importavam cada pasta separadamente.
         if (legacyDataIsReady() && !prefs.getBoolean(PREF_DATA_READY, false)) {
@@ -63,16 +68,22 @@ public class MainActivity extends AppCompatActivity {
 
         jogar.setOnClickListener(v -> {
             String nick = editNick.getText().toString().trim();
+            String servidor = editServer.getText().toString().trim();
 
             if (nick.isEmpty()) {
                 editNick.setError("Digite seu Nome_Sobrenome");
                 return;
             }
 
+            if (servidor.isEmpty()) {
+                editServer.setError("Digite IP:Porta");
+                return;
+            }
+
             if (!isDataReady()) {
                 Toast.makeText(
                         MainActivity.this,
-                        "Instale a Data MOD antes de continuar.",
+                        "Instale a Data MOD DZ6 antes de jogar.",
                         Toast.LENGTH_LONG
                 ).show();
                 openDz6DataFolderPicker();
@@ -81,9 +92,12 @@ public class MainActivity extends AppCompatActivity {
 
             prefs.edit()
                     .putString("nickname", nick)
+                    .putString("server_address", servidor)
                     .apply();
 
-            Intent intent = new Intent(MainActivity.this, ServersActivity.class);
+            Intent intent = new Intent(MainActivity.this, SAMP.class);
+            intent.putExtra("nickname", nick);
+            intent.putExtra("server_address", servidor);
             startActivity(intent);
         });
     }
