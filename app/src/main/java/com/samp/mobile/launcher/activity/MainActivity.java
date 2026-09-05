@@ -15,7 +15,6 @@ import android.widget.Toast;
 import androidx.appcompat.app.AppCompatActivity;
 
 import com.samp.mobile.R;
-import com.samp.mobile.game.SAMP;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -73,17 +72,18 @@ public class MainActivity extends AppCompatActivity {
             if (!isDataReady()) {
                 Toast.makeText(
                         MainActivity.this,
-                        "Instale a Data MOD DZ6 antes de jogar.",
+                        "Instale a Data MOD antes de continuar.",
                         Toast.LENGTH_LONG
                 ).show();
                 openDz6DataFolderPicker();
                 return;
             }
 
-            prefs.edit().putString("nickname", nick).apply();
+            prefs.edit()
+                    .putString("nickname", nick)
+                    .apply();
 
-            Intent intent = new Intent(MainActivity.this, SAMP.class);
-            intent.putExtra("nickname", nick);
+            Intent intent = new Intent(MainActivity.this, ServersActivity.class);
             startActivity(intent);
         });
     }
