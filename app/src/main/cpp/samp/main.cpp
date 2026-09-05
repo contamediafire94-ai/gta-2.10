@@ -40,6 +40,8 @@ CAudioStream* pAudioStream = nullptr;
 CJavaWrapper* pJavaWrapper = nullptr;
 CSettings* pSettings = nullptr;
 extern char g_launcherNickname[25];
+extern char g_launcherServerHost[128];
+extern unsigned short g_launcherServerPort;
 //CVoice* pVoice = nullptr;
 
 MaterialTextGenerator* pMaterialTextGenerator = nullptr;
@@ -312,7 +314,18 @@ void DoInitStuff() {
 
         int serverid = pSettings->GetReadOnly().iServerID;
 
-        if (serverid == 0)
+        if (g_launcherServerHost[0] != '\0' && g_launcherServerPort != 0)
+        {
+            FLog("Launcher server: %s:%u", g_launcherServerHost, (unsigned int)g_launcherServerPort);
+
+            pNetGame = new CNetGame(
+                    g_launcherServerHost,
+                    g_launcherServerPort,
+                    pSettings->Get().szNickName,
+                    pSettings->Get().szPassword
+            );
+        }
+        else if (serverid == 0)
         {
             pNetGame = new CNetGame(SERVER_HOST_TEST, SERVER_PORT_TEST, pSettings->Get().szNickName, pSettings->Get().szPassword);
         }
@@ -374,6 +387,8 @@ void GameBackground()
 }
 */
 char g_launcherNickname[25] = {0};
+char g_launcherServerHost[128] = {0};
+unsigned short g_launcherServerPort = 0;
 extern "C" {
 	JNIEXPORT void JNICALL Java_com_samp_mobile_game_SAMP_initializeSAMP(JNIEnv *pEnv, jobject thiz)
   {
@@ -406,6 +421,48 @@ JNIEXPORT void JNICALL Java_com_samp_mobile_game_SAMP_setLauncherNickname(
         snprintf(g_launcherNickname, sizeof(g_launcherNickname), "%s", value);
         pEnv->ReleaseStringUTFChars(nickname, value);
     }
+}
+
+JNIEXPORT void JNICALL Java_com_samp_mobile_game_SAMP_setLauncherServer(
+        JNIEnv *pEnv,
+        jobject thiz,
+        jstring serverAddress)
+{
+    if (serverAddress == nullptr) return;
+
+    const char* value = pEnv->GetStringUTFChars(serverAddress, nullptr);
+    if (value == nullptr) return;
+
+    char address[160] = {0};
+    snprintf(address, sizeof(address), "%s", value);
+    pEnv->ReleaseStringUTFChars(serverAddress, value);
+
+    char* separator = strrchr(address, ':');
+
+    if (separator == nullptr)
+    {
+        FLog("Launcher server invalid: missing port");
+        return;
+    }
+
+    *separator = '\0';
+
+    const char* host = address;
+    const char* portText = separator + 1;
+    int port = atoi(portText);
+
+    if (host[0] == '\0' || port < 1 || port > 65535)
+    {
+        FLog("Launcher server invalid: %s:%s", host, portText);
+        return;
+    }
+
+    snprintf(g_launcherServerHost, sizeof(g_launcherServerHost), "%s", host);
+    g_launcherServerPort = (unsigned short)port;
+
+    FLog("Launcher server received: %s:%u",
+         g_launcherServerHost,
+         (unsigned int)g_launcherServerPort);
 }
 	JNIEXPORT void JNICALL Java_com_samp_mobile_game_SAMP_onInputEnd(JNIEnv *pEnv, jobject thiz, jbyteArray str)
 	{
