@@ -36,6 +36,26 @@
         android:maxLength="24"
         android:inputType="textNoSuggestions" />
 
+    <!-- CAMPO DO SERVIDOR -->
+    <EditText
+        android:id="@+id/edit_server"
+        android:layout_width="295dp"
+        android:layout_height="56dp"
+        android:layout_alignParentLeft="true"
+        android:layout_alignParentBottom="true"
+        android:layout_marginLeft="98dp"
+        android:layout_marginBottom="183dp"
+        android:paddingLeft="14dp"
+        android:paddingRight="12dp"
+        android:background="#F20A0A0A"
+        android:hint="IP:Porta"
+        android:textColorHint="#777777"
+        android:textColor="#FFFFFF"
+        android:textSize="18sp"
+        android:gravity="center_vertical"
+        android:singleLine="true"
+        android:inputType="text" />
+
     <!-- ÁREA REAL CLICÁVEL, POSICIONADA SOBRE O BOTÃO JOGAR DA ARTE -->
     <Button
         android:id="@+id/button_play"
