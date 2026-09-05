@@ -64,6 +64,15 @@
 
         </activity>
 
+
+        <!-- Tela principal / navegador de servidores -->
+        <activity
+            android:name="com.samp.mobile.launcher.activity.ServersActivity"
+            android:screenOrientation="landscape"
+            android:theme="@style/Theme.AppCompat.NoActionBar"
+            android:windowSoftInputMode="adjustNothing"
+            android:exported="false" />
+
         <!-- Cliente SA-MP -->
         <activity
             android:name="com.samp.mobile.game.SAMP"
