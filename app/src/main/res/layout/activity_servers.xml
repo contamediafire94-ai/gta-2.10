@@ -46,7 +46,6 @@
             android:textColor="#FFFFFF"
             android:textSize="13sp"
             android:textStyle="bold"
-            android:letterSpacing="0.04"
             android:backgroundTint="#2D6CDF" />
 
         <Button
@@ -58,7 +57,6 @@
             android:textColor="#C8CED8"
             android:textSize="13sp"
             android:textStyle="bold"
-            android:letterSpacing="0.04"
             android:backgroundTint="#181D25" />
 
         <Button
@@ -70,7 +68,6 @@
             android:textColor="#C8CED8"
             android:textSize="13sp"
             android:textStyle="bold"
-            android:letterSpacing="0.04"
             android:backgroundTint="#181D25" />
 
         <View
@@ -84,9 +81,7 @@
             android:text="SA-MP MOBILE"
             android:textColor="#535B69"
             android:textSize="10sp"
-            android:gravity="center"
-            android:letterSpacing="0.10" />
-
+            android:gravity="center" />
     </LinearLayout>
 
     <!-- Conteúdo principal -->
@@ -100,6 +95,7 @@
         android:paddingRight="26dp"
         android:paddingBottom="22dp">
 
+        <!-- Cabeçalho -->
         <TextView
             android:id="@+id/text_title"
             android:layout_width="match_parent"
@@ -114,59 +110,58 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="3dp"
-            android:text="Escolha um servidor ou conecte por IP"
+            android:text="Escolha um servidor para jogar"
             android:textColor="#7C8594"
             android:textSize="14sp" />
 
-        <!-- Acesso rápido -->
+        <!-- Nick + Jogar -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="78dp"
-            android:layout_marginTop="20dp"
+            android:layout_marginTop="16dp"
             android:orientation="horizontal"
             android:gravity="center_vertical"
             android:paddingLeft="16dp"
             android:paddingRight="16dp"
-            android:background="#13171D"
-            android:elevation="2dp">
+            android:background="#13171D">
 
-            <EditText
-                android:id="@+id/edit_nick"
-                android:layout_width="220dp"
-                android:layout_height="50dp"
-                android:hint="Nome_Sobrenome"
-                android:singleLine="true"
-                android:textColor="#FFFFFF"
-                android:textColorHint="#626B79"
-                android:textSize="15sp"
-                android:backgroundTint="#3C4553"
-                android:paddingLeft="10dp"
-                android:paddingRight="10dp"
-                android:selectAllOnFocus="true"
-                android:inputType="textPersonName" />
-
-            <EditText
-                android:id="@+id/edit_server"
+            <LinearLayout
                 android:layout_width="0dp"
-                android:layout_height="50dp"
+                android:layout_height="match_parent"
                 android:layout_weight="1"
-                android:layout_marginLeft="14dp"
-                android:hint="IP:Porta"
-                android:singleLine="true"
-                android:textColor="#FFFFFF"
-                android:textColorHint="#626B79"
-                android:textSize="15sp"
-                android:backgroundTint="#3C4553"
-                android:paddingLeft="10dp"
-                android:paddingRight="10dp"
-                android:selectAllOnFocus="true"
-                android:inputType="textUri" />
+                android:orientation="vertical"
+                android:gravity="center_vertical">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Digite seu Nick"
+                    android:textColor="#8A94A3"
+                    android:textSize="11sp"
+                    android:textStyle="bold"
+                    android:letterSpacing="0.04" />
+
+                <EditText
+                    android:id="@+id/edit_nick"
+                    android:layout_width="match_parent"
+                    android:layout_height="46dp"
+                    android:hint="Nome_Sobrenome"
+                    android:singleLine="true"
+                    android:textColor="#FFFFFF"
+                    android:textColorHint="#626B79"
+                    android:textSize="15sp"
+                    android:backgroundTint="#3C4553"
+                    android:paddingLeft="10dp"
+                    android:paddingRight="10dp"
+                    android:selectAllOnFocus="true"
+                    android:inputType="textPersonName" />
+            </LinearLayout>
 
             <Button
                 android:id="@+id/button_play"
                 android:layout_width="145dp"
                 android:layout_height="50dp"
-                android:layout_marginLeft="14dp"
+                android:layout_marginLeft="16dp"
                 android:text="JOGAR"
                 android:textStyle="bold"
                 android:textSize="14sp"
@@ -181,7 +176,7 @@
             android:layout_width="match_parent"
             android:layout_height="0dp"
             android:layout_weight="1"
-            android:layout_marginTop="16dp"
+            android:layout_marginTop="18dp"
             android:fillViewport="true"
             android:scrollbars="vertical"
             android:fadeScrollbars="false"
@@ -202,11 +197,7 @@
                     android:textSize="12sp"
                     android:textStyle="bold"
                     android:letterSpacing="0.08" />
-
             </LinearLayout>
-
         </ScrollView>
-
     </LinearLayout>
-
 </LinearLayout>
