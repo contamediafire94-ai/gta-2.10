@@ -26,6 +26,7 @@ import org.json.JSONObject;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
+import java.nio.charset.Charset;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -83,9 +84,7 @@ public class ServersActivity extends AppCompatActivity {
         mostrarListaServidores();
 
         jogar.setOnClickListener(v -> entrarNoServidor());
-
         buttonServers.setOnClickListener(v -> mostrarListaServidores());
-
         buttonFavorites.setOnClickListener(v -> mostrarFavoritos());
 
         configuracoes.setOnClickListener(v ->
@@ -131,14 +130,10 @@ public class ServersActivity extends AppCompatActivity {
         textSubtitle.setText("Escolha, favorite ou adicione um servidor");
 
         atualizarDestaqueMenu();
-
         limparLista();
-
         adicionarBotaoAdicionarServidor();
 
-        List<ServerItem> servidores = carregarTodosServidores();
-
-        for (ServerItem servidor : servidores) {
+        for (ServerItem servidor : carregarTodosServidores()) {
             adicionarCardServidor(servidor);
         }
     }
@@ -150,15 +145,12 @@ public class ServersActivity extends AppCompatActivity {
         textSubtitle.setText("Seus servidores favoritos");
 
         atualizarDestaqueMenu();
-
         limparLista();
 
         Set<String> favoritos = carregarFavoritos();
-        List<ServerItem> todos = carregarTodosServidores();
-
         int encontrados = 0;
 
-        for (ServerItem servidor : todos) {
+        for (ServerItem servidor : carregarTodosServidores()) {
             if (favoritos.contains(servidor.address)) {
                 adicionarCardServidor(servidor);
                 encontrados++;
@@ -169,8 +161,8 @@ public class ServersActivity extends AppCompatActivity {
             TextView vazio = new TextView(this);
             vazio.setText("Você ainda não favoritou nenhum servidor.\nVolte em SERVIDORES e toque na estrela ★.");
             vazio.setTextColor(Color.parseColor("#7F8998"));
-            vazio.setTextSize(15);
-            vazio.setPadding(0, dp(22), 0, 0);
+            vazio.setTextSize(14);
+            vazio.setPadding(0, dp(18), 0, 0);
             serverListContainer.addView(vazio);
         }
     }
@@ -194,7 +186,6 @@ public class ServersActivity extends AppCompatActivity {
     }
 
     private void limparLista() {
-        // O primeiro filho é o título "LISTA DE SERVIDORES" do XML.
         while (serverListContainer.getChildCount() > 1) {
             serverListContainer.removeViewAt(1);
         }
@@ -204,7 +195,7 @@ public class ServersActivity extends AppCompatActivity {
         Button adicionar = new Button(this);
         adicionar.setText("+  ADICIONAR SERVIDOR");
         adicionar.setTextColor(Color.WHITE);
-        adicionar.setTextSize(12);
+        adicionar.setTextSize(11);
         adicionar.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         adicionar.setAllCaps(false);
         adicionar.setBackgroundTintList(
@@ -213,9 +204,9 @@ public class ServersActivity extends AppCompatActivity {
 
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT,
-                dp(44)
+                dp(40)
         );
-        params.topMargin = dp(12);
+        params.topMargin = dp(10);
         adicionar.setLayoutParams(params);
 
         adicionar.setOnClickListener(v -> abrirDialogAdicionarServidor());
@@ -228,26 +219,25 @@ public class ServersActivity extends AppCompatActivity {
         conteudo.setOrientation(LinearLayout.VERTICAL);
         conteudo.setPadding(dp(24), dp(8), dp(24), 0);
 
-        EditText nome = new EditText(this);
-        nome.setHint("Nome do servidor");
-        nome.setSingleLine(true);
-
         EditText host = new EditText(this);
         host.setHint("IP ou domínio");
         host.setSingleLine(true);
-        host.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
+        host.setInputType(
+                InputType.TYPE_CLASS_TEXT
+                        | InputType.TYPE_TEXT_VARIATION_URI
+        );
 
         EditText porta = new EditText(this);
         porta.setHint("Porta (ex: 7777)");
         porta.setSingleLine(true);
         porta.setInputType(InputType.TYPE_CLASS_NUMBER);
 
-        conteudo.addView(nome);
         conteudo.addView(host);
         conteudo.addView(porta);
 
         AlertDialog dialog = new AlertDialog.Builder(this)
                 .setTitle("Adicionar servidor")
+                .setMessage("O nome será detectado automaticamente pelo servidor.")
                 .setView(conteudo)
                 .setNegativeButton("CANCELAR", null)
                 .setPositiveButton("SALVAR", null)
@@ -256,14 +246,8 @@ public class ServersActivity extends AppCompatActivity {
         dialog.setOnShowListener(d -> dialog
                 .getButton(AlertDialog.BUTTON_POSITIVE)
                 .setOnClickListener(v -> {
-                    String nomeServidor = nome.getText().toString().trim();
                     String hostServidor = host.getText().toString().trim();
                     String portaTexto = porta.getText().toString().trim();
-
-                    if (nomeServidor.isEmpty()) {
-                        nome.setError("Digite um nome");
-                        return;
-                    }
 
                     if (hostServidor.isEmpty()) {
                         host.setError("Digite o IP ou domínio");
@@ -301,7 +285,7 @@ public class ServersActivity extends AppCompatActivity {
                     }
 
                     salvarServidorPersonalizado(
-                            new ServerItem(nomeServidor, endereco, true)
+                            new ServerItem("", endereco, true)
                     );
 
                     dialog.dismiss();
@@ -322,43 +306,51 @@ public class ServersActivity extends AppCompatActivity {
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.HORIZONTAL);
         card.setGravity(Gravity.CENTER_VERTICAL);
-        card.setPadding(dp(18), dp(12), dp(10), dp(12));
+        card.setPadding(dp(14), dp(7), dp(6), dp(7));
         card.setBackgroundColor(Color.parseColor("#171C24"));
         card.setClickable(true);
         card.setFocusable(true);
 
         LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
-                dp(82)
+                dp(62)
         );
-        cardParams.topMargin = dp(12);
+        cardParams.topMargin = dp(8);
         card.setLayoutParams(cardParams);
 
         LinearLayout info = new LinearLayout(this);
         info.setOrientation(LinearLayout.VERTICAL);
+        info.setGravity(Gravity.CENTER_VERTICAL);
 
         LinearLayout.LayoutParams infoParams = new LinearLayout.LayoutParams(
                 0,
-                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.MATCH_PARENT,
                 1f
         );
         info.setLayoutParams(infoParams);
 
         TextView nome = new TextView(this);
-        nome.setText(servidor.name);
+        nome.setText(
+                servidor.name.isEmpty()
+                        ? "Detectando nome..."
+                        : servidor.name
+        );
         nome.setTextColor(Color.WHITE);
-        nome.setTextSize(17);
+        nome.setTextSize(14);
+        nome.setSingleLine(true);
         nome.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
 
         TextView endereco = new TextView(this);
         endereco.setText(servidor.address);
         endereco.setTextColor(Color.parseColor("#818B9A"));
-        endereco.setTextSize(13);
+        endereco.setTextSize(10);
+        endereco.setSingleLine(true);
 
         TextView detalhes = new TextView(this);
-        detalhes.setText("Consultando servidor...");
+        detalhes.setText("Consultando...");
         detalhes.setTextColor(Color.parseColor("#626C7A"));
-        detalhes.setTextSize(11);
+        detalhes.setTextSize(9);
+        detalhes.setSingleLine(true);
 
         info.addView(nome);
         info.addView(endereco);
@@ -367,19 +359,19 @@ public class ServersActivity extends AppCompatActivity {
         TextView status = new TextView(this);
         status.setText("...");
         status.setTextColor(Color.parseColor("#8DB5FF"));
-        status.setTextSize(12);
+        status.setTextSize(10);
         status.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         status.setGravity(Gravity.CENTER);
 
         LinearLayout.LayoutParams statusParams = new LinearLayout.LayoutParams(
-                dp(138),
-                dp(46)
+                dp(108),
+                dp(38)
         );
         status.setLayoutParams(statusParams);
 
         Button favorito = new Button(this);
         favorito.setText(isFavorito(servidor.address) ? "★" : "☆");
-        favorito.setTextSize(22);
+        favorito.setTextSize(18);
         favorito.setTextColor(
                 isFavorito(servidor.address)
                         ? Color.parseColor("#FFD166")
@@ -389,10 +381,12 @@ public class ServersActivity extends AppCompatActivity {
                 ColorStateList.valueOf(Color.parseColor("#171C24"))
         );
         favorito.setPadding(0, 0, 0, 0);
+        favorito.setMinWidth(0);
+        favorito.setMinHeight(0);
 
         LinearLayout.LayoutParams favParams = new LinearLayout.LayoutParams(
-                dp(54),
-                dp(52)
+                dp(46),
+                dp(42)
         );
         favorito.setLayoutParams(favParams);
 
@@ -405,7 +399,7 @@ public class ServersActivity extends AppCompatActivity {
 
             Toast.makeText(
                     ServersActivity.this,
-                    servidor.name + " selecionado",
+                    nome.getText().toString() + " selecionado",
                     Toast.LENGTH_SHORT
             ).show();
         });
@@ -437,15 +431,16 @@ public class ServersActivity extends AppCompatActivity {
 
         consultarServidor(
                 servidor.address,
+                nome,
                 status,
-                detalhes
+                detalhes,
+                servidor.name
         );
     }
 
     private List<ServerItem> carregarTodosServidores() {
         List<ServerItem> lista = new ArrayList<>();
 
-        // Servidor padrão de teste.
         lista.add(new ServerItem(
                 TEST_SERVER_NAME,
                 TEST_SERVER_ADDRESS,
@@ -471,7 +466,7 @@ public class ServersActivity extends AppCompatActivity {
                 String nome = obj.optString("name", "").trim();
                 String endereco = obj.optString("address", "").trim();
 
-                if (!nome.isEmpty() && !endereco.isEmpty()) {
+                if (!endereco.isEmpty()) {
                     lista.add(new ServerItem(nome, endereco, true));
                 }
             }
@@ -547,8 +542,10 @@ public class ServersActivity extends AppCompatActivity {
 
     private void consultarServidor(
             String enderecoServidor,
+            TextView nomeView,
             TextView statusView,
-            TextView detalhesView
+            TextView detalhesView,
+            String nomeFallback
     ) {
         new Thread(() -> {
             DatagramSocket socket = null;
@@ -584,12 +581,10 @@ public class ServersActivity extends AppCompatActivity {
 
                 query[8] = (byte) (porta & 0xFF);
                 query[9] = (byte) ((porta >> 8) & 0xFF);
-
-                // Query "i" = informações básicas do SA-MP.
                 query[10] = 'i';
 
                 socket = new DatagramSocket();
-                socket.setSoTimeout(1500);
+                socket.setSoTimeout(1800);
 
                 DatagramPacket envio = new DatagramPacket(
                         query,
@@ -601,7 +596,7 @@ public class ServersActivity extends AppCompatActivity {
                 long inicio = System.currentTimeMillis();
                 socket.send(envio);
 
-                byte[] resposta = new byte[2048];
+                byte[] resposta = new byte[4096];
 
                 DatagramPacket recebimento = new DatagramPacket(
                         resposta,
@@ -611,26 +606,45 @@ public class ServersActivity extends AppCompatActivity {
                 socket.receive(recebimento);
 
                 long ping = System.currentTimeMillis() - inicio;
-
                 int tamanho = recebimento.getLength();
 
-                if (tamanho < 16) {
+                if (tamanho < 20) {
                     throw new Exception("Resposta incompleta");
                 }
 
-                int offset = 12;
+                int jogadores = lerUnsignedShortLE(resposta, 12);
+                int maxJogadores = lerUnsignedShortLE(resposta, 14);
 
-                int jogadores = lerUnsignedShortLE(resposta, offset);
-                offset += 2;
+                int tamanhoNome = lerIntLE(resposta, 16);
 
-                int maxJogadores = lerUnsignedShortLE(resposta, offset);
+                if (tamanhoNome < 0
+                        || tamanhoNome > 512
+                        || 20 + tamanhoNome > tamanho) {
+                    throw new Exception("Nome inválido");
+                }
 
+                String nomeDetectado = new String(
+                        resposta,
+                        20,
+                        tamanhoNome,
+                        Charset.forName("windows-1252")
+                ).trim();
+
+                if (nomeDetectado.isEmpty()) {
+                    nomeDetectado = nomeFallback.isEmpty()
+                            ? enderecoServidor
+                            : nomeFallback;
+                }
+
+                final String nomeFinal = nomeDetectado;
                 final String detalheTexto =
                         jogadores + "/" + maxJogadores
                                 + " jogadores  •  "
                                 + ping + " ms";
 
                 runOnUiThread(() -> {
+                    nomeView.setText(nomeFinal);
+
                     statusView.setText("ONLINE");
                     statusView.setTextColor(Color.parseColor("#55D98B"));
 
@@ -639,7 +653,13 @@ public class ServersActivity extends AppCompatActivity {
                 });
 
             } catch (Exception e) {
+                final String fallback = nomeFallback.isEmpty()
+                        ? enderecoServidor
+                        : nomeFallback;
+
                 runOnUiThread(() -> {
+                    nomeView.setText(fallback);
+
                     statusView.setText("OFFLINE");
                     statusView.setTextColor(Color.parseColor("#E86A6A"));
 
@@ -657,6 +677,13 @@ public class ServersActivity extends AppCompatActivity {
     private int lerUnsignedShortLE(byte[] dados, int offset) {
         return (dados[offset] & 0xFF)
                 | ((dados[offset + 1] & 0xFF) << 8);
+    }
+
+    private int lerIntLE(byte[] dados, int offset) {
+        return (dados[offset] & 0xFF)
+                | ((dados[offset + 1] & 0xFF) << 8)
+                | ((dados[offset + 2] & 0xFF) << 16)
+                | ((dados[offset + 3] & 0xFF) << 24);
     }
 
     private int dp(int value) {
