@@ -45,7 +45,7 @@ public class ServersActivity extends AppCompatActivity {
             if (nick.isEmpty()) {
                 Toast.makeText(
                         ServersActivity.this,
-                        "Nickname nÃ£o encontrado. Volte e informe seu nick.",
+                        "Nickname não encontrado. Volte e informe seu nick.",
                         Toast.LENGTH_LONG
                 ).show();
                 return;
@@ -71,11 +71,11 @@ public class ServersActivity extends AppCompatActivity {
         );
 
         favoritos.setOnClickListener(v ->
-                Toast.makeText(this, "Favoritos: prÃ³xima etapa", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Favoritos: próxima etapa", Toast.LENGTH_SHORT).show()
         );
 
         configuracoes.setOnClickListener(v ->
-                Toast.makeText(this, "ConfiguraÃ§Ãµes: prÃ³xima etapa", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Configurações: próxima etapa", Toast.LENGTH_SHORT).show()
         );
     }
 }
