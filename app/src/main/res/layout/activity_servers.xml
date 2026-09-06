@@ -3,15 +3,18 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="horizontal"
-    android:background="#0B0D10">
+    android:background="#090B0E">
 
-    <!-- Barra lateral estilo launcher -->
+    <!-- Barra lateral -->
     <LinearLayout
-        android:layout_width="190dp"
+        android:layout_width="200dp"
         android:layout_height="match_parent"
         android:orientation="vertical"
-        android:padding="18dp"
-        android:background="#12151A">
+        android:paddingLeft="18dp"
+        android:paddingTop="22dp"
+        android:paddingRight="18dp"
+        android:paddingBottom="18dp"
+        android:background="#101318">
 
         <TextView
             android:layout_width="match_parent"
@@ -21,7 +24,19 @@
             android:textSize="28sp"
             android:textStyle="bold"
             android:gravity="center_horizontal"
-            android:paddingBottom="28dp" />
+            android:letterSpacing="0.04" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:layout_marginBottom="28dp"
+            android:text="LAUNCHER"
+            android:textColor="#707887"
+            android:textSize="10sp"
+            android:textStyle="bold"
+            android:gravity="center_horizontal"
+            android:letterSpacing="0.18" />
 
         <Button
             android:id="@+id/button_servers"
@@ -29,7 +44,10 @@
             android:layout_height="48dp"
             android:text="SERVIDORES"
             android:textColor="#FFFFFF"
-            android:backgroundTint="#232832" />
+            android:textSize="13sp"
+            android:textStyle="bold"
+            android:letterSpacing="0.04"
+            android:backgroundTint="#2D6CDF" />
 
         <Button
             android:id="@+id/button_favorites"
@@ -37,8 +55,11 @@
             android:layout_height="48dp"
             android:layout_marginTop="10dp"
             android:text="FAVORITOS"
-            android:textColor="#FFFFFF"
-            android:backgroundTint="#232832" />
+            android:textColor="#C8CED8"
+            android:textSize="13sp"
+            android:textStyle="bold"
+            android:letterSpacing="0.04"
+            android:backgroundTint="#181D25" />
 
         <Button
             android:id="@+id/button_settings"
@@ -46,8 +67,26 @@
             android:layout_height="48dp"
             android:layout_marginTop="10dp"
             android:text="CONFIGURAÇÕES"
-            android:textColor="#FFFFFF"
-            android:backgroundTint="#232832" />
+            android:textColor="#C8CED8"
+            android:textSize="13sp"
+            android:textStyle="bold"
+            android:letterSpacing="0.04"
+            android:backgroundTint="#181D25" />
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="SA-MP MOBILE"
+            android:textColor="#535B69"
+            android:textSize="10sp"
+            android:gravity="center"
+            android:letterSpacing="0.10" />
+
     </LinearLayout>
 
     <!-- Conteúdo principal -->
@@ -56,101 +95,122 @@
         android:layout_height="match_parent"
         android:layout_weight="1"
         android:orientation="vertical"
-        android:padding="24dp">
+        android:paddingLeft="26dp"
+        android:paddingTop="24dp"
+        android:paddingRight="26dp"
+        android:paddingBottom="22dp">
 
         <TextView
             android:id="@+id/text_title"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="Servidores"
-            android:textColor="#FFFFFF"
-            android:textSize="28sp"
+            android:textColor="#F4F6F8"
+            android:textSize="30sp"
             android:textStyle="bold" />
 
         <TextView
             android:id="@+id/text_subtitle"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
+            android:layout_marginTop="3dp"
             android:text="Escolha um servidor ou conecte por IP"
-            android:textColor="#8D96A5"
-            android:textSize="15sp" />
+            android:textColor="#7C8594"
+            android:textSize="14sp" />
 
-        <!-- Card de conexão direta -->
+        <!-- Acesso rápido -->
         <LinearLayout
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="22dp"
+            android:layout_height="78dp"
+            android:layout_marginTop="20dp"
             android:orientation="horizontal"
             android:gravity="center_vertical"
-            android:padding="14dp"
-            android:background="#151920">
+            android:paddingLeft="16dp"
+            android:paddingRight="16dp"
+            android:background="#13171D"
+            android:elevation="2dp">
 
             <EditText
                 android:id="@+id/edit_nick"
                 android:layout_width="220dp"
-                android:layout_height="52dp"
+                android:layout_height="50dp"
                 android:hint="Nome_Sobrenome"
                 android:singleLine="true"
                 android:textColor="#FFFFFF"
-                android:textColorHint="#697181"
-                android:backgroundTint="#697181"
-                android:paddingLeft="12dp"
-                android:paddingRight="12dp"
+                android:textColorHint="#626B79"
+                android:textSize="15sp"
+                android:backgroundTint="#3C4553"
+                android:paddingLeft="10dp"
+                android:paddingRight="10dp"
+                android:selectAllOnFocus="true"
                 android:inputType="textPersonName" />
 
             <EditText
                 android:id="@+id/edit_server"
                 android:layout_width="0dp"
-                android:layout_height="52dp"
+                android:layout_height="50dp"
                 android:layout_weight="1"
-                android:layout_marginLeft="12dp"
+                android:layout_marginLeft="14dp"
                 android:hint="IP:Porta"
                 android:singleLine="true"
                 android:textColor="#FFFFFF"
-                android:textColorHint="#697181"
-                android:backgroundTint="#697181"
-                android:paddingLeft="12dp"
-                android:paddingRight="12dp"
+                android:textColorHint="#626B79"
+                android:textSize="15sp"
+                android:backgroundTint="#3C4553"
+                android:paddingLeft="10dp"
+                android:paddingRight="10dp"
+                android:selectAllOnFocus="true"
                 android:inputType="textUri" />
 
             <Button
                 android:id="@+id/button_play"
-                android:layout_width="150dp"
-                android:layout_height="52dp"
+                android:layout_width="145dp"
+                android:layout_height="50dp"
                 android:layout_marginLeft="14dp"
                 android:text="JOGAR"
                 android:textStyle="bold"
+                android:textSize="14sp"
                 android:textColor="#FFFFFF"
-                android:backgroundTint="#2D6CDF" />
+                android:letterSpacing="0.08"
+                android:backgroundTint="#2D6CDF"
+                android:elevation="3dp" />
         </LinearLayout>
 
-        <!-- Área que depois receberá a lista real de servidores -->
+        <!-- Lista -->
         <LinearLayout
             android:id="@+id/server_list_container"
             android:layout_width="match_parent"
             android:layout_height="0dp"
             android:layout_weight="1"
-            android:layout_marginTop="18dp"
+            android:layout_marginTop="16dp"
             android:orientation="vertical"
-            android:padding="16dp"
-            android:background="#11151B">
+            android:padding="18dp"
+            android:background="#10141A">
 
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="LISTA DE SERVIDORES"
-                android:textColor="#7F8998"
-                android:textSize="13sp"
-                android:textStyle="bold" />
+                android:textColor="#737D8D"
+                android:textSize="12sp"
+                android:textStyle="bold"
+                android:letterSpacing="0.08" />
 
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="18dp"
+                android:layout_marginTop="16dp"
                 android:text="A lista de servidores aparecerá aqui."
-                android:textColor="#FFFFFF"
-                android:textSize="17sp" />
+                android:textColor="#D9DEE6"
+                android:textSize="16sp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="5dp"
+                android:text="Selecione um servidor para preencher o endereço automaticamente."
+                android:textColor="#626B79"
+                android:textSize="12sp" />
 
         </LinearLayout>
 
