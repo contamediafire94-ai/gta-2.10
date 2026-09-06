@@ -40,8 +40,6 @@ public class ServersActivity extends AppCompatActivity {
     private static final String PREF_CUSTOM_SERVERS = "custom_servers_json";
     private static final String PREF_FAVORITES = "favorite_servers";
 
-    private EditText editNick;
-    private EditText editServer;
     private SharedPreferences prefs;
 
     private TextView textTitle;
@@ -50,8 +48,15 @@ public class ServersActivity extends AppCompatActivity {
 
     private Button buttonServers;
     private Button buttonFavorites;
+    private Button buttonSettings;
+    private EditText editNick;
 
-    private boolean showingFavorites = false;
+    private int currentSection = 0;
+    // 0 = servidores | 1 = favoritos | 2 = configurações
+
+    private String selectedServerAddress = TEST_SERVER_ADDRESS;
+    private String selectedServerName = TEST_SERVER_NAME;
+    private Button buttonPlay;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -60,77 +65,37 @@ public class ServersActivity extends AppCompatActivity {
 
         prefs = getSharedPreferences("beta_tester_config", MODE_PRIVATE);
 
-        editNick = findViewById(R.id.edit_nick);
-        editServer = findViewById(R.id.edit_server);
-
         textTitle = findViewById(R.id.text_title);
         textSubtitle = findViewById(R.id.text_subtitle);
         serverListContainer = findViewById(R.id.server_list_container);
 
-        Button jogar = findViewById(R.id.button_play);
         buttonServers = findViewById(R.id.button_servers);
         buttonFavorites = findViewById(R.id.button_favorites);
-        Button configuracoes = findViewById(R.id.button_settings);
+        buttonSettings = findViewById(R.id.button_settings);
+        buttonPlay = findViewById(R.id.button_play);
+        editNick = findViewById(R.id.edit_nick);
 
-        String nickSalvo = prefs.getString("nickname", "");
-        String servidorSalvo = prefs.getString(
-                "server_address",
-                TEST_SERVER_ADDRESS
-        );
+        selectedServerAddress = prefs.getString("server_address", TEST_SERVER_ADDRESS);
+        editNick.setText(prefs.getString("nickname", ""));
 
-        editNick.setText(nickSalvo);
-        editServer.setText(servidorSalvo);
+        buttonPlay.setOnClickListener(v -> jogarServidorSelecionado());
 
-        mostrarListaServidores();
-
-        jogar.setOnClickListener(v -> entrarNoServidor());
         buttonServers.setOnClickListener(v -> mostrarListaServidores());
         buttonFavorites.setOnClickListener(v -> mostrarFavoritos());
+        buttonSettings.setOnClickListener(v -> mostrarConfiguracoes());
 
-        configuracoes.setOnClickListener(v ->
-                Toast.makeText(
-                        this,
-                        "Configurações será a próxima etapa",
-                        Toast.LENGTH_SHORT
-                ).show()
-        );
-    }
-
-    private void entrarNoServidor() {
-        String nick = editNick.getText().toString().trim();
-        String servidor = editServer.getText().toString().trim();
-
-        if (nick.isEmpty()) {
-            editNick.setError("Digite seu Nome_Sobrenome");
-            editNick.requestFocus();
-            return;
-        }
-
-        if (servidor.isEmpty()) {
-            editServer.setError("Digite IP:Porta");
-            editServer.requestFocus();
-            return;
-        }
-
-        prefs.edit()
-                .putString("nickname", nick)
-                .putString("server_address", servidor)
-                .apply();
-
-        Intent intent = new Intent(ServersActivity.this, SAMP.class);
-        intent.putExtra("nickname", nick);
-        intent.putExtra("server_address", servidor);
-        startActivity(intent);
+        mostrarListaServidores();
     }
 
     private void mostrarListaServidores() {
-        showingFavorites = false;
+        currentSection = 0;
 
         textTitle.setText("Servidores");
         textSubtitle.setText("Escolha, favorite ou adicione um servidor");
 
         atualizarDestaqueMenu();
         limparLista();
+        definirTituloLista("LISTA DE SERVIDORES");
         adicionarBotaoAdicionarServidor();
 
         for (ServerItem servidor : carregarTodosServidores()) {
@@ -139,13 +104,14 @@ public class ServersActivity extends AppCompatActivity {
     }
 
     private void mostrarFavoritos() {
-        showingFavorites = true;
+        currentSection = 1;
 
         textTitle.setText("Favoritos");
         textSubtitle.setText("Seus servidores favoritos");
 
         atualizarDestaqueMenu();
         limparLista();
+        definirTituloLista("SERVIDORES FAVORITOS");
 
         Set<String> favoritos = carregarFavoritos();
         int encontrados = 0;
@@ -159,7 +125,10 @@ public class ServersActivity extends AppCompatActivity {
 
         if (encontrados == 0) {
             TextView vazio = new TextView(this);
-            vazio.setText("Você ainda não favoritou nenhum servidor.\nVolte em SERVIDORES e toque na estrela ★.");
+            vazio.setText(
+                    "Você ainda não favoritou nenhum servidor.\n" +
+                    "Volte em SERVIDORES e toque na estrela ★."
+            );
             vazio.setTextColor(Color.parseColor("#7F8998"));
             vazio.setTextSize(14);
             vazio.setPadding(0, dp(18), 0, 0);
@@ -167,28 +136,184 @@ public class ServersActivity extends AppCompatActivity {
         }
     }
 
+    private void mostrarConfiguracoes() {
+        currentSection = 2;
+
+        textTitle.setText("Configurações");
+        textSubtitle.setText("Ajustes do Wiu Launcher");
+
+        atualizarDestaqueMenu();
+        limparLista();
+        definirTituloLista("PERFIL DO JOGADOR");
+
+        TextView labelNick = criarLabel("NICKNAME PADRÃO");
+        serverListContainer.addView(labelNick);
+
+        EditText editNick = new EditText(this);
+        editNick.setHint("Nome_Sobrenome");
+        editNick.setSingleLine(true);
+        editNick.setText(prefs.getString("nickname", ""));
+        editNick.setTextColor(Color.WHITE);
+        editNick.setHintTextColor(Color.parseColor("#626B79"));
+        editNick.setTextSize(15);
+        editNick.setBackgroundTintList(
+                ColorStateList.valueOf(Color.parseColor("#3C4553"))
+        );
+        editNick.setPadding(dp(10), 0, dp(10), 0);
+
+        LinearLayout.LayoutParams nickParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                dp(48)
+        );
+        nickParams.topMargin = dp(8);
+        editNick.setLayoutParams(nickParams);
+
+        serverListContainer.addView(editNick);
+
+        Button salvarNick = criarBotaoSecundario("SALVAR NICK");
+        salvarNick.setOnClickListener(v -> {
+            String nick = editNick.getText().toString().trim();
+
+            if (nick.isEmpty()) {
+                editNick.setError("Digite seu Nome_Sobrenome");
+                editNick.requestFocus();
+                return;
+            }
+
+            prefs.edit()
+                    .putString("nickname", nick)
+                    .apply();
+
+            editNick.setText(nick);
+
+            Toast.makeText(
+                    this,
+                    "Nickname salvo",
+                    Toast.LENGTH_SHORT
+            ).show();
+        });
+
+        serverListContainer.addView(salvarNick);
+
+        TextView labelDados = criarLabel("GERENCIAR LISTAS");
+        LinearLayout.LayoutParams labelDadosParams =
+                new LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT,
+                        LinearLayout.LayoutParams.WRAP_CONTENT
+                );
+        labelDadosParams.topMargin = dp(22);
+        labelDados.setLayoutParams(labelDadosParams);
+        serverListContainer.addView(labelDados);
+
+        Button limparFavoritos = criarBotaoSecundario("LIMPAR FAVORITOS");
+        limparFavoritos.setOnClickListener(v -> new AlertDialog.Builder(this)
+                .setTitle("Limpar favoritos")
+                .setMessage("Remover todos os servidores dos favoritos?")
+                .setNegativeButton("CANCELAR", null)
+                .setPositiveButton("LIMPAR", (dialog, which) -> {
+                    prefs.edit()
+                            .remove(PREF_FAVORITES)
+                            .apply();
+
+                    Toast.makeText(
+                            this,
+                            "Favoritos limpos",
+                            Toast.LENGTH_SHORT
+                    ).show();
+                })
+                .show());
+
+        serverListContainer.addView(limparFavoritos);
+
+        Button limparAdicionados = criarBotaoSecundario(
+                "REMOVER SERVIDORES ADICIONADOS"
+        );
+        limparAdicionados.setOnClickListener(v -> new AlertDialog.Builder(this)
+                .setTitle("Remover servidores")
+                .setMessage(
+                        "Isso remove apenas os servidores adicionados por você."
+                )
+                .setNegativeButton("CANCELAR", null)
+                .setPositiveButton("REMOVER", (dialog, which) -> {
+                    prefs.edit()
+                            .putString(PREF_CUSTOM_SERVERS, "[]")
+                            .apply();
+
+                    Toast.makeText(
+                            this,
+                            "Servidores adicionados removidos",
+                            Toast.LENGTH_SHORT
+                    ).show();
+                })
+                .show());
+
+        serverListContainer.addView(limparAdicionados);
+
+        TextView dica = new TextView(this);
+        dica.setText(
+                "Selecione um servidor na lista e depois toque em JOGAR."
+        );
+        dica.setTextColor(Color.parseColor("#697383"));
+        dica.setTextSize(12);
+        dica.setPadding(0, dp(18), 0, dp(4));
+        serverListContainer.addView(dica);
+    }
+
+    private TextView criarLabel(String texto) {
+        TextView label = new TextView(this);
+        label.setText(texto);
+        label.setTextColor(Color.parseColor("#737D8D"));
+        label.setTextSize(11);
+        label.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        label.setLetterSpacing(0.08f);
+        return label;
+    }
+
+    private Button criarBotaoSecundario(String texto) {
+        Button botao = new Button(this);
+        botao.setText(texto);
+        botao.setTextColor(Color.WHITE);
+        botao.setTextSize(11);
+        botao.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        botao.setAllCaps(false);
+        botao.setBackgroundTintList(
+                ColorStateList.valueOf(Color.parseColor("#202631"))
+        );
+
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                dp(42)
+        );
+        params.topMargin = dp(10);
+        botao.setLayoutParams(params);
+
+        return botao;
+    }
+
     private void atualizarDestaqueMenu() {
-        if (showingFavorites) {
-            buttonServers.setBackgroundTintList(
-                    ColorStateList.valueOf(Color.parseColor("#181D25"))
-            );
-            buttonFavorites.setBackgroundTintList(
-                    ColorStateList.valueOf(Color.parseColor("#2D6CDF"))
-            );
-        } else {
-            buttonServers.setBackgroundTintList(
-                    ColorStateList.valueOf(Color.parseColor("#2D6CDF"))
-            );
-            buttonFavorites.setBackgroundTintList(
-                    ColorStateList.valueOf(Color.parseColor("#181D25"))
-            );
-        }
+        int ativo = Color.parseColor("#2D6CDF");
+        int inativo = Color.parseColor("#181D25");
+
+        buttonServers.setBackgroundTintList(
+                ColorStateList.valueOf(currentSection == 0 ? ativo : inativo)
+        );
+
+        buttonFavorites.setBackgroundTintList(
+                ColorStateList.valueOf(currentSection == 1 ? ativo : inativo)
+        );
+
+        buttonSettings.setBackgroundTintList(
+                ColorStateList.valueOf(currentSection == 2 ? ativo : inativo)
+        );
     }
 
     private void limparLista() {
-        while (serverListContainer.getChildCount() > 1) {
-            serverListContainer.removeViewAt(1);
-        }
+        serverListContainer.removeAllViews();
+    }
+
+    private void definirTituloLista(String texto) {
+        TextView titulo = criarLabel(texto);
+        serverListContainer.addView(titulo);
     }
 
     private void adicionarBotaoAdicionarServidor() {
@@ -237,7 +362,9 @@ public class ServersActivity extends AppCompatActivity {
 
         AlertDialog dialog = new AlertDialog.Builder(this)
                 .setTitle("Adicionar servidor")
-                .setMessage("O nome será detectado automaticamente pelo servidor.")
+                .setMessage(
+                        "O nome será detectado automaticamente pelo servidor."
+                )
                 .setView(conteudo)
                 .setNegativeButton("CANCELAR", null)
                 .setPositiveButton("SALVAR", null)
@@ -395,11 +522,18 @@ public class ServersActivity extends AppCompatActivity {
         card.addView(favorito);
 
         card.setOnClickListener(v -> {
-            editServer.setText(servidor.address);
+            selectedServerAddress = servidor.address;
+            selectedServerName = nome.getText().toString();
+
+            prefs.edit()
+                    .putString("server_address", selectedServerAddress)
+                    .apply();
+
+            textSubtitle.setText("Selecionado: " + selectedServerName);
 
             Toast.makeText(
-                    ServersActivity.this,
-                    nome.getText().toString() + " selecionado",
+                    this,
+                    selectedServerName + " selecionado",
                     Toast.LENGTH_SHORT
             ).show();
         });
@@ -422,7 +556,7 @@ public class ServersActivity extends AppCompatActivity {
                     Toast.LENGTH_SHORT
             ).show();
 
-            if (showingFavorites && !agoraFavorito) {
+            if (currentSection == 1 && !agoraFavorito) {
                 mostrarFavoritos();
             }
         });
@@ -436,6 +570,52 @@ public class ServersActivity extends AppCompatActivity {
                 detalhes,
                 servidor.name
         );
+    }
+
+    private void jogarServidorSelecionado() {
+        String nick = editNick.getText().toString().trim();
+
+        if (nick.isEmpty()) {
+            editNick.setError("Digite seu Nick");
+            editNick.requestFocus();
+            return;
+        }
+
+        prefs.edit()
+                .putString("nickname", nick)
+                .putString("server_address", selectedServerAddress)
+                .apply();
+
+        iniciarServidor(selectedServerAddress, selectedServerName);
+    }
+
+    private void iniciarServidor(String enderecoServidor, String nomeServidor) {
+        String nick = prefs.getString("nickname", "").trim();
+
+        if (nick.isEmpty()) {
+            Toast.makeText(
+                    this,
+                    "Defina seu nickname em CONFIGURAÇÕES primeiro.",
+                    Toast.LENGTH_LONG
+            ).show();
+
+            mostrarConfiguracoes();
+            return;
+        }
+
+        prefs.edit()
+                .putString("server_address", enderecoServidor)
+                .apply();
+
+        Intent intent = new Intent(
+                ServersActivity.this,
+                SAMP.class
+        );
+
+        intent.putExtra("nickname", nick);
+        intent.putExtra("server_address", enderecoServidor);
+
+        startActivity(intent);
     }
 
     private List<ServerItem> carregarTodosServidores() {
@@ -467,7 +647,13 @@ public class ServersActivity extends AppCompatActivity {
                 String endereco = obj.optString("address", "").trim();
 
                 if (!endereco.isEmpty()) {
-                    lista.add(new ServerItem(nome, endereco, true));
+                    lista.add(
+                            new ServerItem(
+                                    nome,
+                                    endereco,
+                                    true
+                            )
+                    );
                 }
             }
         } catch (Exception ignored) {
@@ -646,10 +832,14 @@ public class ServersActivity extends AppCompatActivity {
                     nomeView.setText(nomeFinal);
 
                     statusView.setText("ONLINE");
-                    statusView.setTextColor(Color.parseColor("#55D98B"));
+                    statusView.setTextColor(
+                            Color.parseColor("#55D98B")
+                    );
 
                     detalhesView.setText(detalheTexto);
-                    detalhesView.setTextColor(Color.parseColor("#7F8998"));
+                    detalhesView.setTextColor(
+                            Color.parseColor("#7F8998")
+                    );
                 });
 
             } catch (Exception e) {
@@ -661,10 +851,16 @@ public class ServersActivity extends AppCompatActivity {
                     nomeView.setText(fallback);
 
                     statusView.setText("OFFLINE");
-                    statusView.setTextColor(Color.parseColor("#E86A6A"));
+                    statusView.setTextColor(
+                            Color.parseColor("#E86A6A")
+                    );
 
-                    detalhesView.setText("Sem resposta do servidor");
-                    detalhesView.setTextColor(Color.parseColor("#626C7A"));
+                    detalhesView.setText(
+                            "Sem resposta do servidor"
+                    );
+                    detalhesView.setTextColor(
+                            Color.parseColor("#626C7A")
+                    );
                 });
             } finally {
                 if (socket != null) {
@@ -697,7 +893,11 @@ public class ServersActivity extends AppCompatActivity {
         final String address;
         final boolean custom;
 
-        ServerItem(String name, String address, boolean custom) {
+        ServerItem(
+                String name,
+                String address,
+                boolean custom
+        ) {
             this.name = name;
             this.address = address;
             this.custom = custom;
