@@ -87,10 +87,24 @@
             android:background="#151920">
 
             <EditText
+                android:id="@+id/edit_nick"
+                android:layout_width="220dp"
+                android:layout_height="52dp"
+                android:hint="Nome_Sobrenome"
+                android:singleLine="true"
+                android:textColor="#FFFFFF"
+                android:textColorHint="#697181"
+                android:backgroundTint="#697181"
+                android:paddingLeft="12dp"
+                android:paddingRight="12dp"
+                android:inputType="textPersonName" />
+
+            <EditText
                 android:id="@+id/edit_server"
                 android:layout_width="0dp"
                 android:layout_height="52dp"
                 android:layout_weight="1"
+                android:layout_marginLeft="12dp"
                 android:hint="IP:Porta"
                 android:singleLine="true"
                 android:textColor="#FFFFFF"
