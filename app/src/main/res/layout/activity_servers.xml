@@ -176,43 +176,36 @@
                 android:elevation="3dp" />
         </LinearLayout>
 
-        <!-- Lista -->
-        <LinearLayout
-            android:id="@+id/server_list_container"
+        <!-- Lista com rolagem -->
+        <ScrollView
             android:layout_width="match_parent"
             android:layout_height="0dp"
             android:layout_weight="1"
             android:layout_marginTop="16dp"
-            android:orientation="vertical"
-            android:padding="18dp"
+            android:fillViewport="true"
+            android:scrollbars="vertical"
+            android:fadeScrollbars="false"
             android:background="#10141A">
 
-            <TextView
+            <LinearLayout
+                android:id="@+id/server_list_container"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="LISTA DE SERVIDORES"
-                android:textColor="#737D8D"
-                android:textSize="12sp"
-                android:textStyle="bold"
-                android:letterSpacing="0.08" />
+                android:orientation="vertical"
+                android:padding="18dp">
 
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="16dp"
-                android:text="A lista de servidores aparecerá aqui."
-                android:textColor="#D9DEE6"
-                android:textSize="16sp" />
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="LISTA DE SERVIDORES"
+                    android:textColor="#737D8D"
+                    android:textSize="12sp"
+                    android:textStyle="bold"
+                    android:letterSpacing="0.08" />
 
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="5dp"
-                android:text="Selecione um servidor para preencher o endereço automaticamente."
-                android:textColor="#626B79"
-                android:textSize="12sp" />
+            </LinearLayout>
 
-        </LinearLayout>
+        </ScrollView>
 
     </LinearLayout>
 
