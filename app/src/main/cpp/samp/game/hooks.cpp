@@ -3152,6 +3152,29 @@ stFile* NvFOpen(const char* r0, const char* r1, int r2, int r3)
         }
     }
 
+    // V51 - arquivos .IMG da pasta TEXDB no armazenamento interno.
+    // Ex.: TEXDB/GTA3.IMG -> /data/user/0/.../files/texdb_img_app/GTA3.IMG
+    // Mantemos isto separado do bloco "texdb/" (minúsculo), que trata os
+    // arquivos .txt/.dat/.tmb/.toc usados pelo texdb mobile.
+    if (!strncmp(r1, "TEXDB/", 6))
+    {
+        char resolvedTexdbImg[255]{};
+
+        if (V48ResolveReadablePathCaseInsensitive(
+                "/data/user/0/com.samp.mobile/files/texdb_img_app",
+                r1 + 6,
+                resolvedTexdbImg,
+                sizeof(resolvedTexdbImg)))
+        {
+            snprintf(path, sizeof(path), "%s", resolvedTexdbImg);
+            FLog("V51 TEXDB IMG selected | request=%s | path=%s", r1, path);
+        }
+        else
+        {
+            FLog("V51 TEXDB IMG no internal candidate | request=%s", r1);
+        }
+    }
+
     // V44 - AMERICAN.GXT no armazenamento interno privado do app.
     //
     // O V43 confirmou EACCES em todos os caminhos dentro de Android/data.
