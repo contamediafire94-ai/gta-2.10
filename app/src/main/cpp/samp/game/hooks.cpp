@@ -3432,35 +3432,19 @@ if(!strncmp(r1+12, "mainV1.scm", 10))
         FLog("Redirecting ANIM -> %s", path);
     }
 
-    // CINFO.BIN valido importado pelo launcher para CINFO_APP.BIN.
-    // Abre em leitura+escrita porque o CColAccel le o cache durante
-    // startCache e pode atualiza-lo em endCache.
+    // V50 - BYPASS DO CINFO.BIN IMPORTADO.
+    //
+    // A V49 passou WEAPONS.COL e carregou os IDE/DAT do mapa, mas caiu em
+    // CColStore::IncludeModelIndex -> CColAccel::cacheLoadCol logo depois de
+    // abrir CINFO_APP.BIN. Isso indica que o cache importado pode nao
+    // corresponder ao conjunto atual de gta.dat/IDE/COL.
+    //
+    // Para este teste, tratamos CINFO.BIN como inexistente. Assim o GTA nao
+    // consome o cache importado/stale e segue pelo caminho normal de carga
+    // dos COLs. Nao apagamos o arquivo; apenas deixamos de entrega-lo ao GTA.
     if (!strcmp(r1, "CINFO.BIN"))
     {
-#if VER_x32
-        auto *st = (stFile*)malloc(8);
-#else
-        auto *st = (stFile*)malloc(0x10);
-#endif
-        st->isFileExist = false;
-
-        snprintf(path, sizeof(path), "%sCINFO_APP.BIN", WIU_INTERNAL_ROOT);
-
-        errno = 0;
-        FILE *f = fopen(path, "r+b");
-
-        if (f)
-        {
-            st->isFileExist = true;
-            st->f = f;
-            FLog("CINFO imported OK | %s", path);
-            return st;
-        }
-
-        int openErr = errno;
-        FLog("CINFO imported FAIL | path=%s | errno=%d | %s",
-             path, openErr, strerror(openErr));
-        free(st);
+        FLog("V50 CINFO BYPASS | request=%s | imported cache intentionally ignored", r1);
         return nullptr;
     }
 
