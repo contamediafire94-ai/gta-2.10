@@ -30,6 +30,16 @@ public class SAMP extends GTASA implements
     private AttachEdit mAttachEdit;
     private LoadingScreen mLoadingScreen;
 
+    // Estabilidade de entrada:
+    // a rede só é liberada quando a UI do loading E a ponte nativa
+    // estiverem prontas. Também evita disparos duplicados.
+    private final Object initLock = new Object();
+    private boolean loadingUiReady = false;
+    private boolean nativeInitReturned = false;
+    private boolean networkInitReleased = false;
+    private boolean nativeInitStarted = false;
+    private boolean activityDestroyed = false;
+
     public native void sendDialogResponse(int i, int i2, int i3, byte[] str);
 
     private native void initializeSAMP();
@@ -58,6 +68,85 @@ public class SAMP extends GTASA implements
                         | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
                         | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
         );
+    }
+
+    private void markLoadingUiReady() {
+        synchronized (initLock) {
+            loadingUiReady = true;
+        }
+
+        Log.i(TAG, "WIU-STAB: loading UI ready");
+        tryReleaseNetworkInit();
+    }
+
+    private void initializeNativeOnce() {
+        synchronized (initLock) {
+            if (nativeInitStarted) {
+                Log.w(TAG, "WIU-STAB: initializeSAMP ignorado, já iniciado");
+                return;
+            }
+
+            nativeInitStarted = true;
+        }
+
+        try {
+            Log.i(TAG, "WIU-STAB: initializeSAMP begin");
+            initializeSAMP();
+
+            synchronized (initLock) {
+                nativeInitReturned = true;
+            }
+
+            Log.i(TAG, "WIU-STAB: initializeSAMP returned");
+            tryReleaseNetworkInit();
+
+        } catch (UnsatisfiedLinkError e) {
+            synchronized (initLock) {
+                nativeInitStarted = false;
+                nativeInitReturned = false;
+            }
+
+            Log.e(TAG, "Erro ao inicializar biblioteca nativa do SA-MP", e);
+        }
+    }
+
+    private void tryReleaseNetworkInit() {
+        boolean shouldRelease;
+
+        synchronized (initLock) {
+            shouldRelease =
+                    !activityDestroyed
+                            && loadingUiReady
+                            && nativeInitReturned
+                            && !networkInitReleased;
+
+            if (shouldRelease) {
+                // Marca antes da chamada JNI para impedir chamada duplicada
+                // caso o native faça callback imediatamente para o Java.
+                networkInitReleased = true;
+            }
+        }
+
+        if (!shouldRelease) {
+            return;
+        }
+
+        try {
+            Log.i(TAG, "WIU-STAB: releasing network init");
+
+            if (mLoadingScreen != null) {
+                mLoadingScreen.setStatus("Conectando ao servidor...");
+            }
+
+            nativeAllowNetworkInit();
+
+        } catch (UnsatisfiedLinkError e) {
+            synchronized (initLock) {
+                networkInitReleased = false;
+            }
+
+            Log.e(TAG, "WIU-STAB: nativeAllowNetworkInit failed", e);
+        }
     }
 
     private void showTab() {
@@ -241,15 +330,11 @@ public class SAMP extends GTASA implements
         mLoadingScreen = new LoadingScreen(this, new Runnable() {
             @Override
             public void run() {
-                try {
-                    Log.i(TAG, "WIU: loading UI ready -> nativeAllowNetworkInit()");
-                    if (mLoadingScreen != null) {
-                        mLoadingScreen.setStatus("Preparando o SA-MP Mobile...");
-                    }
-                    nativeAllowNetworkInit();
-                } catch (UnsatisfiedLinkError e) {
-                    Log.e(TAG, "V15C: nativeAllowNetworkInit failed", e);
+                if (mLoadingScreen != null) {
+                    mLoadingScreen.setStatus("Preparando o SA-MP Mobile...");
                 }
+
+                markLoadingUiReady();
             }
         });
 
@@ -278,11 +363,13 @@ public class SAMP extends GTASA implements
                 }
             }
 
-            initializeSAMP();
-
         } catch (UnsatisfiedLinkError e) {
-            Log.e(TAG, "Erro ao inicializar biblioteca nativa do SA-MP", e);
+            Log.e(TAG, "Erro ao aplicar dados do launcher no native", e);
         }
+
+        // Só depois de Nick/IP terem sido aplicados iniciamos a ponte nativa.
+        // A rede ainda ficará fechada até o LoadingScreen confirmar que a UI está pronta.
+        initializeNativeOnce();
     }
 
     @Override
@@ -322,6 +409,11 @@ public class SAMP extends GTASA implements
     @Override
     public void onDestroy() {
         Log.i(TAG, "**** onDestroy");
+
+        synchronized (initLock) {
+            activityDestroyed = true;
+        }
+
         instance = null;
         super.onDestroy();
     }
