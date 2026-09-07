@@ -11,6 +11,7 @@ import android.view.Gravity;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
+import android.widget.PopupMenu;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -39,6 +40,8 @@ public class ServersActivity extends AppCompatActivity {
 
     private static final String PREF_CUSTOM_SERVERS = "custom_servers_json";
     private static final String PREF_FAVORITES = "favorite_servers";
+    private static final String PREF_TEST_SERVER_ADDRESS = "test_server_address_override";
+    private static final String PREF_TEST_SERVER_HIDDEN = "test_server_hidden";
 
     private SharedPreferences prefs;
 
@@ -75,7 +78,17 @@ public class ServersActivity extends AppCompatActivity {
         buttonPlay = findViewById(R.id.button_play);
         editNick = findViewById(R.id.edit_nick);
 
-        selectedServerAddress = prefs.getString("server_address", TEST_SERVER_ADDRESS);
+        selectedServerAddress = prefs.getString("server_address", "");
+
+        if (selectedServerAddress.trim().isEmpty()) {
+            List<ServerItem> iniciais = carregarTodosServidores();
+
+            if (!iniciais.isEmpty()) {
+                selectedServerAddress = iniciais.get(0).address;
+                selectedServerName = iniciais.get(0).name;
+            }
+        }
+
         editNick.setText(prefs.getString("nickname", ""));
 
         buttonPlay.setOnClickListener(v -> jogarServidorSelecionado());
@@ -512,14 +525,33 @@ public class ServersActivity extends AppCompatActivity {
         favorito.setMinHeight(0);
 
         LinearLayout.LayoutParams favParams = new LinearLayout.LayoutParams(
-                dp(46),
+                dp(42),
                 dp(42)
         );
         favorito.setLayoutParams(favParams);
 
+        Button menu = new Button(this);
+        menu.setText("...");
+        menu.setTextSize(17);
+        menu.setTextColor(Color.parseColor("#A9B1BD"));
+        menu.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        menu.setBackgroundTintList(
+                ColorStateList.valueOf(Color.parseColor("#171C24"))
+        );
+        menu.setPadding(0, 0, 0, dp(8));
+        menu.setMinWidth(0);
+        menu.setMinHeight(0);
+
+        LinearLayout.LayoutParams menuParams = new LinearLayout.LayoutParams(
+                dp(48),
+                dp(42)
+        );
+        menu.setLayoutParams(menuParams);
+
         card.addView(info);
         card.addView(status);
         card.addView(favorito);
+        card.addView(menu);
 
         card.setOnClickListener(v -> {
             selectedServerAddress = servidor.address;
@@ -561,6 +593,14 @@ public class ServersActivity extends AppCompatActivity {
             }
         });
 
+        menu.setOnClickListener(v ->
+                abrirMenuServidor(
+                        menu,
+                        servidor,
+                        nome.getText().toString()
+                )
+        );
+
         serverListContainer.addView(card);
 
         consultarServidor(
@@ -572,8 +612,334 @@ public class ServersActivity extends AppCompatActivity {
         );
     }
 
+    private void abrirMenuServidor(
+            Button anchor,
+            ServerItem servidor,
+            String nomeAtual
+    ) {
+        PopupMenu popup = new PopupMenu(this, anchor);
+
+        popup.getMenu().add("Editar IP / porta");
+        popup.getMenu().add("Excluir servidor");
+
+        popup.setOnMenuItemClickListener(item -> {
+            String titulo = item.getTitle().toString();
+
+            if ("Editar IP / porta".equals(titulo)) {
+                abrirDialogEditarServidor(servidor, nomeAtual);
+                return true;
+            }
+
+            if ("Excluir servidor".equals(titulo)) {
+                confirmarExcluirServidor(servidor, nomeAtual);
+                return true;
+            }
+
+            return false;
+        });
+
+        popup.show();
+    }
+
+    private void abrirDialogEditarServidor(
+            ServerItem servidor,
+            String nomeAtual
+    ) {
+        String hostAtual = servidor.address;
+        String portaAtual = "";
+
+        int separador = servidor.address.lastIndexOf(':');
+
+        if (separador > 0 && separador < servidor.address.length() - 1) {
+            hostAtual = servidor.address.substring(0, separador);
+            portaAtual = servidor.address.substring(separador + 1);
+        }
+
+        LinearLayout conteudo = new LinearLayout(this);
+        conteudo.setOrientation(LinearLayout.VERTICAL);
+        conteudo.setPadding(dp(24), dp(8), dp(24), 0);
+
+        EditText host = new EditText(this);
+        host.setHint("IP ou domínio");
+        host.setText(hostAtual);
+        host.setSingleLine(true);
+        host.setInputType(
+                InputType.TYPE_CLASS_TEXT
+                        | InputType.TYPE_TEXT_VARIATION_URI
+        );
+
+        EditText porta = new EditText(this);
+        porta.setHint("Porta");
+        porta.setText(portaAtual);
+        porta.setSingleLine(true);
+        porta.setInputType(InputType.TYPE_CLASS_NUMBER);
+
+        conteudo.addView(host);
+        conteudo.addView(porta);
+
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle("Editar servidor")
+                .setMessage(nomeAtual)
+                .setView(conteudo)
+                .setNegativeButton("CANCELAR", null)
+                .setPositiveButton("SALVAR", null)
+                .create();
+
+        dialog.setOnShowListener(d -> dialog
+                .getButton(AlertDialog.BUTTON_POSITIVE)
+                .setOnClickListener(v -> {
+                    String novoHost = host.getText().toString().trim();
+                    String novaPortaTexto = porta.getText().toString().trim();
+
+                    if (novoHost.isEmpty()) {
+                        host.setError("Digite o IP ou domínio");
+                        return;
+                    }
+
+                    if (novaPortaTexto.isEmpty()) {
+                        porta.setError("Digite a porta");
+                        return;
+                    }
+
+                    int novaPorta;
+
+                    try {
+                        novaPorta = Integer.parseInt(novaPortaTexto);
+                    } catch (Exception e) {
+                        porta.setError("Porta inválida");
+                        return;
+                    }
+
+                    if (novaPorta < 1 || novaPorta > 65535) {
+                        porta.setError("Use uma porta entre 1 e 65535");
+                        return;
+                    }
+
+                    String novoEndereco = novoHost + ":" + novaPorta;
+
+                    if (servidorJaExisteExceto(
+                            novoEndereco,
+                            servidor.address
+                    )) {
+                        Toast.makeText(
+                                this,
+                                "Esse servidor já está na lista",
+                                Toast.LENGTH_SHORT
+                        ).show();
+                        return;
+                    }
+
+                    editarServidor(
+                            servidor,
+                            novoEndereco
+                    );
+
+                    dialog.dismiss();
+
+                    Toast.makeText(
+                            this,
+                            "Servidor atualizado",
+                            Toast.LENGTH_SHORT
+                    ).show();
+
+                    if (currentSection == 1) {
+                        mostrarFavoritos();
+                    } else {
+                        mostrarListaServidores();
+                    }
+                }));
+
+        dialog.show();
+    }
+
+    private void editarServidor(
+            ServerItem servidor,
+            String novoEndereco
+    ) {
+        String enderecoAntigo = servidor.address;
+
+        if (servidor.custom) {
+            List<ServerItem> lista = carregarServidoresPersonalizados();
+
+            JSONArray array = new JSONArray();
+
+            try {
+                for (ServerItem item : lista) {
+                    JSONObject obj = new JSONObject();
+
+                    if (item.address.equalsIgnoreCase(enderecoAntigo)) {
+                        obj.put("name", item.name);
+                        obj.put("address", novoEndereco);
+                    } else {
+                        obj.put("name", item.name);
+                        obj.put("address", item.address);
+                    }
+
+                    array.put(obj);
+                }
+
+                prefs.edit()
+                        .putString(PREF_CUSTOM_SERVERS, array.toString())
+                        .apply();
+
+            } catch (Exception ignored) {
+            }
+        } else {
+            prefs.edit()
+                    .putString(PREF_TEST_SERVER_ADDRESS, novoEndereco)
+                    .putBoolean(PREF_TEST_SERVER_HIDDEN, false)
+                    .apply();
+        }
+
+        Set<String> favoritos = carregarFavoritos();
+
+        if (favoritos.remove(enderecoAntigo)) {
+            favoritos.add(novoEndereco);
+
+            prefs.edit()
+                    .putStringSet(PREF_FAVORITES, favoritos)
+                    .apply();
+        }
+
+        if (selectedServerAddress.equalsIgnoreCase(enderecoAntigo)) {
+            selectedServerAddress = novoEndereco;
+
+            prefs.edit()
+                    .putString("server_address", novoEndereco)
+                    .apply();
+        }
+    }
+
+    private void confirmarExcluirServidor(
+            ServerItem servidor,
+            String nomeAtual
+    ) {
+        new AlertDialog.Builder(this)
+                .setTitle("Excluir servidor")
+                .setMessage(
+                        "Excluir \"" + nomeAtual + "\" da sua lista?"
+                )
+                .setNegativeButton("CANCELAR", null)
+                .setPositiveButton("EXCLUIR", (dialog, which) -> {
+                    excluirServidor(servidor);
+
+                    Toast.makeText(
+                            this,
+                            "Servidor excluído",
+                            Toast.LENGTH_SHORT
+                    ).show();
+
+                    if (currentSection == 1) {
+                        mostrarFavoritos();
+                    } else {
+                        mostrarListaServidores();
+                    }
+                })
+                .show();
+    }
+
+    private void excluirServidor(ServerItem servidor) {
+        String enderecoExcluido = servidor.address;
+
+        if (servidor.custom) {
+            List<ServerItem> lista = carregarServidoresPersonalizados();
+            JSONArray array = new JSONArray();
+
+            try {
+                for (ServerItem item : lista) {
+                    if (item.address.equalsIgnoreCase(enderecoExcluido)) {
+                        continue;
+                    }
+
+                    JSONObject obj = new JSONObject();
+                    obj.put("name", item.name);
+                    obj.put("address", item.address);
+                    array.put(obj);
+                }
+
+                prefs.edit()
+                        .putString(PREF_CUSTOM_SERVERS, array.toString())
+                        .apply();
+
+            } catch (Exception ignored) {
+            }
+
+        } else {
+            prefs.edit()
+                    .putBoolean(PREF_TEST_SERVER_HIDDEN, true)
+                    .apply();
+        }
+
+        Set<String> favoritos = carregarFavoritos();
+        favoritos.remove(enderecoExcluido);
+
+        prefs.edit()
+                .putStringSet(PREF_FAVORITES, favoritos)
+                .apply();
+
+        if (selectedServerAddress.equalsIgnoreCase(enderecoExcluido)) {
+            selecionarPrimeiroServidorDisponivel();
+        }
+    }
+
+    private void selecionarPrimeiroServidorDisponivel() {
+        List<ServerItem> restantes = carregarTodosServidores();
+
+        if (restantes.isEmpty()) {
+            selectedServerAddress = "";
+            selectedServerName = "";
+
+            prefs.edit()
+                    .remove("server_address")
+                    .apply();
+
+            textSubtitle.setText(
+                    "Adicione ou selecione um servidor"
+            );
+            return;
+        }
+
+        ServerItem primeiro = restantes.get(0);
+
+        selectedServerAddress = primeiro.address;
+        selectedServerName = primeiro.name.isEmpty()
+                ? primeiro.address
+                : primeiro.name;
+
+        prefs.edit()
+                .putString("server_address", selectedServerAddress)
+                .apply();
+    }
+
+    private boolean servidorJaExisteExceto(
+            String endereco,
+            String ignorarEndereco
+    ) {
+        for (ServerItem servidor : carregarTodosServidores()) {
+            if (servidor.address.equalsIgnoreCase(ignorarEndereco)) {
+                continue;
+            }
+
+            if (servidor.address.equalsIgnoreCase(endereco)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private void jogarServidorSelecionado() {
         String nick = editNick.getText().toString().trim();
+
+        if (selectedServerAddress == null
+                || selectedServerAddress.trim().isEmpty()) {
+            Toast.makeText(
+                    this,
+                    "Selecione ou adicione um servidor primeiro.",
+                    Toast.LENGTH_LONG
+            ).show();
+            return;
+        }
 
         if (nick.isEmpty()) {
             editNick.setError("Digite seu Nick");
@@ -621,11 +987,18 @@ public class ServersActivity extends AppCompatActivity {
     private List<ServerItem> carregarTodosServidores() {
         List<ServerItem> lista = new ArrayList<>();
 
-        lista.add(new ServerItem(
-                TEST_SERVER_NAME,
-                TEST_SERVER_ADDRESS,
-                false
-        ));
+        if (!prefs.getBoolean(PREF_TEST_SERVER_HIDDEN, false)) {
+            String enderecoTeste = prefs.getString(
+                    PREF_TEST_SERVER_ADDRESS,
+                    TEST_SERVER_ADDRESS
+            );
+
+            lista.add(new ServerItem(
+                    TEST_SERVER_NAME,
+                    enderecoTeste,
+                    false
+            ));
+        }
 
         lista.addAll(carregarServidoresPersonalizados());
 
