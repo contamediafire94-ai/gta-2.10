@@ -46,6 +46,7 @@ import java.nio.charset.Charset;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 
 public class ServersActivity extends AppCompatActivity {
@@ -60,7 +61,7 @@ public class ServersActivity extends AppCompatActivity {
 
     // V45 - DATA privada interna
     private static final int REQUEST_INTERNAL_DATA_FOLDER = 9045;
-    private static final String PREF_INTERNAL_DATA_READY = "wiu_internal_data_v45";
+    private static final String PREF_INTERNAL_DATA_READY = "wiu_internal_data_v48";
 
     // Coloque aqui o convite oficial da sua comunidade quando quiser ativar o botão.
     private static final String DISCORD_URL = "";
@@ -1095,10 +1096,23 @@ public class ServersActivity extends AppCompatActivity {
     private boolean isInternalDataReady() {
         File root = getFilesDir();
 
+        // V48: a pasta data precisa estar normalizada em minúsculas.
+        // Android é case-sensitive e a BetaTesterData usa nomes mistos
+        // como Decision/PedEvent.txt.
+        File fonts = new File(root, "data_app/fonts.dat");
+        File pedEvent = new File(root, "data_app/decision/pedevent.txt");
+
+        File texdbIndex = findFileIgnoreCase(
+                new File(root, "texdb_app"),
+                "menu.txt",
+                5
+        );
+
         boolean ready =
-                new File(root, "texdb_app/texdb").isDirectory()
-                        && new File(root, "data_app/data").isDirectory()
-                        && new File(root, "audio_app/audio").isDirectory()
+                isNonEmptyFile(fonts)
+                        && isNonEmptyFile(pedEvent)
+                        && texdbIndex != null
+                        && isNonEmptyFile(texdbIndex)
                         && new File(root, "SAMP_app").isDirectory()
                         && new File(root, "anim_app").isDirectory()
                         && new File(root, "models").isDirectory()
@@ -1110,6 +1124,59 @@ public class ServersActivity extends AppCompatActivity {
         }
 
         return ready;
+    }
+
+    private File findFileIgnoreCase(
+            File directory,
+            String wantedName,
+            int maxDepth
+    ) {
+        if (directory == null
+                || !directory.exists()
+                || maxDepth < 0) {
+            return null;
+        }
+
+        if (directory.isFile()) {
+            return directory.getName().equalsIgnoreCase(wantedName)
+                    ? directory
+                    : null;
+        }
+
+        File[] children = directory.listFiles();
+
+        if (children == null) {
+            return null;
+        }
+
+        for (File child : children) {
+            if (child.isFile()
+                    && child.getName().equalsIgnoreCase(wantedName)) {
+                return child;
+            }
+        }
+
+        if (maxDepth == 0) {
+            return null;
+        }
+
+        for (File child : children) {
+            if (!child.isDirectory()) {
+                continue;
+            }
+
+            File found = findFileIgnoreCase(
+                    child,
+                    wantedName,
+                    maxDepth - 1
+            );
+
+            if (found != null) {
+                return found;
+            }
+        }
+
+        return null;
     }
 
     private boolean isNonEmptyFile(File file) {
@@ -1214,13 +1281,11 @@ public class ServersActivity extends AppCompatActivity {
                 // Preservamos a estrutura esperada pelo native.
                 File animDest = prepareCleanDirectory(root, "anim_app");
 
-                File audioBase = prepareCleanDirectory(root, "audio_app");
-                File audioDest = new File(audioBase, "audio");
-                ensureDirectory(audioDest);
-
-                File dataBase = prepareCleanDirectory(root, "data_app");
-                File dataDest = new File(dataBase, "data");
-                ensureDirectory(dataDest);
+                // Copia o CONTEÚDO das pastas de origem diretamente.
+                // O hook aceita tanto data_app/... quanto data_app/data/...
+                // e audio_app/... quanto audio_app/audio/...
+                File audioDest = prepareCleanDirectory(root, "audio_app");
+                File dataDest = prepareCleanDirectory(root, "data_app");
 
                 File sampDest = prepareCleanDirectory(root, "SAMP_app");
 
@@ -1232,7 +1297,15 @@ public class ServersActivity extends AppCompatActivity {
 
                 copyDocumentDirectoryContents(treeUri, anim.uri, animDest);
                 copyDocumentDirectoryContents(treeUri, audio.uri, audioDest);
-                copyDocumentDirectoryContents(treeUri, dataDir.uri, dataDest);
+
+                // V48: DATA é copiada toda em minúsculas para evitar
+                // Decision/PedEvent.txt vs decision/pedevent.txt no Android.
+                copyDocumentDirectoryContentsLowercase(
+                        treeUri,
+                        dataDir.uri,
+                        dataDest
+                );
+
                 copyDocumentDirectoryContents(treeUri, samp.uri, sampDest);
                 copyDocumentDirectoryContents(treeUri, texdb.uri, texdbDest);
                 copyDocumentDirectoryContents(treeUri, models.uri, modelsDest);
@@ -1259,11 +1332,38 @@ public class ServersActivity extends AppCompatActivity {
                     throw new IOException("stream.ini não foi copiado corretamente.");
                 }
 
-                // Confirma que as pastas principais existem antes de marcar pronto.
-                if (!new File(root, "texdb_app/texdb").isDirectory()
-                        || !new File(root, "data_app/data").isDirectory()
-                        || !new File(root, "audio_app/audio").isDirectory()
-                        || !new File(root, "SAMP_app").isDirectory()
+                // V48: valida a estrutura normalizada que o hook V47 espera.
+                File importedFonts =
+                        new File(root, "data_app/fonts.dat");
+
+                File importedPedEvent =
+                        new File(root, "data_app/decision/pedevent.txt");
+
+                File importedMenu = findFileIgnoreCase(
+                        new File(root, "texdb_app"),
+                        "menu.txt",
+                        5
+                );
+
+                if (!isNonEmptyFile(importedFonts)) {
+                    throw new IOException(
+                            "fonts.dat não foi copiado corretamente."
+                    );
+                }
+
+                if (!isNonEmptyFile(importedPedEvent)) {
+                    throw new IOException(
+                            "decision/pedevent.txt não foi copiado corretamente."
+                    );
+                }
+
+                if (importedMenu == null || !isNonEmptyFile(importedMenu)) {
+                    throw new IOException(
+                            "menu.txt do texdb não foi encontrado."
+                    );
+                }
+
+                if (!new File(root, "SAMP_app").isDirectory()
                         || !new File(root, "anim_app").isDirectory()
                         || !new File(root, "models").isDirectory()) {
                     throw new IOException("A estrutura interna ficou incompleta.");
@@ -1517,6 +1617,85 @@ public class ServersActivity extends AppCompatActivity {
                     ensureDirectory(output);
 
                     copyDocumentDirectoryContents(
+                            treeUri,
+                            childUri,
+                            output
+                    );
+                } else {
+                    copyDocumentFile(
+                            resolver,
+                            childUri,
+                            output
+                    );
+                }
+            }
+        }
+    }
+
+    private void copyDocumentDirectoryContentsLowercase(
+            Uri treeUri,
+            Uri sourceDirectoryUri,
+            File destinationDirectory
+    ) throws IOException {
+        ContentResolver resolver = getContentResolver();
+
+        Uri childrenUri =
+                DocumentsContract.buildChildDocumentsUriUsingTree(
+                        treeUri,
+                        DocumentsContract.getDocumentId(sourceDirectoryUri)
+                );
+
+        String[] projection = new String[]{
+                DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                DocumentsContract.Document.COLUMN_MIME_TYPE
+        };
+
+        try (Cursor cursor = resolver.query(
+                childrenUri,
+                projection,
+                null,
+                null,
+                null
+        )) {
+            if (cursor == null) {
+                throw new IOException(
+                        "Não foi possível listar uma pasta da Data."
+                );
+            }
+
+            int idColumn = cursor.getColumnIndexOrThrow(
+                    DocumentsContract.Document.COLUMN_DOCUMENT_ID
+            );
+            int nameColumn = cursor.getColumnIndexOrThrow(
+                    DocumentsContract.Document.COLUMN_DISPLAY_NAME
+            );
+            int mimeColumn = cursor.getColumnIndexOrThrow(
+                    DocumentsContract.Document.COLUMN_MIME_TYPE
+            );
+
+            while (cursor.moveToNext()) {
+                String documentId = cursor.getString(idColumn);
+                String displayName = cursor.getString(nameColumn);
+                String mimeType = cursor.getString(mimeColumn);
+
+                Uri childUri =
+                        DocumentsContract.buildDocumentUriUsingTree(
+                                treeUri,
+                                documentId
+                        );
+
+                // Normaliza cada componente do caminho.
+                String normalizedName =
+                        displayName.toLowerCase(Locale.ROOT);
+
+                File output =
+                        new File(destinationDirectory, normalizedName);
+
+                if (DocumentsContract.Document.MIME_TYPE_DIR.equals(mimeType)) {
+                    ensureDirectory(output);
+
+                    copyDocumentDirectoryContentsLowercase(
                             treeUri,
                             childUri,
                             output
