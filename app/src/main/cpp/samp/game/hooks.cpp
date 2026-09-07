@@ -3035,11 +3035,55 @@ stFile* NvFOpen(const char* r0, const char* r1, int r2, int r3)
 
     sprintf(path, "%s%s", g_pszStorage, r1);
 
-    // Redireciona o arquivo de idioma para a copia criada pelo proprio app.
+    // V43 - AMERICAN.GXT robust fallback.
+    //
+    // O arquivo AMERICAN_APP.GXT ja funcionou nesta base, mas em alguns boots
+    // o Android pode devolver EACCES para essa copia. Como CText::Load nao
+    // tolera bem um arquivo de idioma indisponivel, testamos caminhos conhecidos
+    // antes de entregar o FILE* ao GTA.
     if (!strncmp(r1, "TEXT/AMERICAN.GXT", 17))
     {
-        sprintf(path, "%sAMERICAN_APP.GXT", g_pszStorage);
-        FLog("Redirecting AMERICAN.GXT -> %s", path);
+        const char* suffixes[] = {
+                "AMERICAN_APP.GXT",
+                "Text/american.gxt",
+                "TEXT/AMERICAN.GXT",
+                "SAMP_app/AMERICAN.GXT",
+                "SAMP_app/american.gxt"
+        };
+
+        bool foundReadableAmerican = false;
+        char candidate[255]{};
+
+        for (const char* suffix : suffixes)
+        {
+            memset(candidate, 0, sizeof(candidate));
+            snprintf(candidate, sizeof(candidate), "%s%s", g_pszStorage, suffix);
+
+            errno = 0;
+            FILE* check = fopen(candidate, "rb");
+
+            if (check)
+            {
+                fclose(check);
+
+                snprintf(path, sizeof(path), "%s", candidate);
+                FLog("V43 AMERICAN selected | %s", path);
+
+                foundReadableAmerican = true;
+                break;
+            }
+
+            const int checkErr = errno;
+            FLog("V43 AMERICAN candidate FAIL | path=%s | errno=%d | %s",
+                 candidate, checkErr, strerror(checkErr));
+        }
+
+        if (!foundReadableAmerican)
+        {
+            // Mantem o caminho original pedido pelo GTA como ultimo fallback.
+            snprintf(path, sizeof(path), "%s%s", g_pszStorage, r1);
+            FLog("V43 AMERICAN no readable fallback | original=%s", path);
+        }
     }
 
     // Todo acesso a texdb/ vai para a copia criada pelo proprio app.
