@@ -49,9 +49,17 @@
 
         </provider>
 
-        <!-- Launcher Beta -->
+        <!-- Instalador/compatibilidade antiga: não é mais a tela inicial -->
         <activity
             android:name="com.samp.mobile.launcher.activity.MainActivity"
+            android:screenOrientation="landscape"
+            android:theme="@style/Theme.AppCompat.NoActionBar"
+            android:windowSoftInputMode="adjustNothing"
+            android:exported="false" />
+
+        <!-- Tela inicial oficial do Wiu Launcher -->
+        <activity
+            android:name="com.samp.mobile.launcher.activity.ServersActivity"
             android:screenOrientation="landscape"
             android:theme="@style/Theme.AppCompat.NoActionBar"
             android:windowSoftInputMode="adjustNothing"
@@ -63,15 +71,6 @@
             </intent-filter>
 
         </activity>
-
-
-        <!-- Tela principal / navegador de servidores -->
-        <activity
-            android:name="com.samp.mobile.launcher.activity.ServersActivity"
-            android:screenOrientation="landscape"
-            android:theme="@style/Theme.AppCompat.NoActionBar"
-            android:windowSoftInputMode="adjustNothing"
-            android:exported="false" />
 
         <!-- Cliente SA-MP -->
         <activity
