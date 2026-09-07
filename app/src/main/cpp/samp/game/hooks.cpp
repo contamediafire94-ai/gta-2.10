@@ -3128,6 +3128,30 @@ stFile* NvFOpen(const char* r0, const char* r1, int r2, int r3)
         }
     }
 
+    // V49 - MODELS interno com resolucao case-insensitive.
+    // O Android e case-sensitive e o GTA pode pedir, por exemplo,
+    // MODELS/COLL/WEAPONS.COL enquanto a copia privada usa models/coll/...
+    // Resolve qualquer arquivo sob MODELS/ dentro da area privada antes de
+    // cair no caminho externo de Android/data (que nesta build retorna EACCES).
+    if (!strncasecmp(r1, "MODELS/", 7))
+    {
+        char resolvedModels[255]{};
+
+        if (V48ResolveReadablePathCaseInsensitive(
+                WIU_INTERNAL_ROOT,
+                r1,
+                resolvedModels,
+                sizeof(resolvedModels)))
+        {
+            snprintf(path, sizeof(path), "%s", resolvedModels);
+            FLog("V49 MODELS selected | request=%s | path=%s", r1, path);
+        }
+        else
+        {
+            FLog("V49 MODELS no internal candidate | request=%s", r1);
+        }
+    }
+
     // V44 - AMERICAN.GXT no armazenamento interno privado do app.
     //
     // O V43 confirmou EACCES em todos os caminhos dentro de Android/data.
