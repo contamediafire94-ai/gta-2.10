@@ -132,6 +132,9 @@ public class ServersActivity extends AppCompatActivity {
 
         buttonPlay.setOnClickListener(v -> jogarServidorSelecionado());
         buttonAddServer.setOnClickListener(v -> abrirDialogAdicionarServidor());
+        buttonAddServer.setBackgroundTintList(
+                ColorStateList.valueOf(Color.parseColor("#2D6CDF"))
+        );
 
         buttonServers.setOnClickListener(v -> mostrarListaServidores());
         buttonFavorites.setOnClickListener(v -> mostrarFavoritos());
@@ -544,7 +547,7 @@ public class ServersActivity extends AppCompatActivity {
 
         LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
-                dp(62)
+                dp(70)
         );
         cardParams.topMargin = dp(8);
         card.setLayoutParams(cardParams);
@@ -595,8 +598,8 @@ public class ServersActivity extends AppCompatActivity {
         status.setGravity(Gravity.CENTER);
 
         LinearLayout.LayoutParams statusParams = new LinearLayout.LayoutParams(
-                dp(78),
-                dp(36)
+                dp(90),
+                dp(38)
         );
         status.setLayoutParams(statusParams);
 
@@ -1435,9 +1438,9 @@ public class ServersActivity extends AppCompatActivity {
                 && !selectedServerAddress.trim().isEmpty();
 
         String status =
-                "✓  Lista carregada (" + quantidade + ")\\n" +
-                "✓  Cliente SA-MP integrado\\n" +
-                "✓  Loading personalizado\\n" +
+                "✓  Lista carregada (" + quantidade + ")\n" +
+                "✓  Cliente SA-MP integrado\n" +
+                "✓  Loading personalizado\n" +
                 (selecionado
                         ? "✓  Servidor selecionado"
                         : "○  Selecione um servidor");
@@ -1488,19 +1491,44 @@ public class ServersActivity extends AppCompatActivity {
 
     private void adicionarCardDestaque(ServerItem servidor) {
         LinearLayout card = new LinearLayout(this);
-        card.setOrientation(LinearLayout.VERTICAL);
+        card.setOrientation(LinearLayout.HORIZONTAL);
         card.setGravity(Gravity.CENTER_VERTICAL);
-        card.setPadding(dp(14), dp(10), dp(14), dp(10));
-        card.setBackground(criarFundoArredondado("#151B24", 12));
+        card.setPadding(dp(12), dp(8), dp(10), dp(8));
+        card.setBackground(criarFundoArredondado("#151B24", 11));
         card.setClickable(true);
         card.setFocusable(true);
 
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
-                dp(270),
-                dp(82)
+                dp(350),
+                dp(66)
         );
         params.rightMargin = dp(10);
         card.setLayoutParams(params);
+
+        TextView estrela = new TextView(this);
+        estrela.setText(isFavorito(servidor.address) ? "★" : "☆");
+        estrela.setTextColor(
+                isFavorito(servidor.address)
+                        ? Color.parseColor("#FFD166")
+                        : Color.parseColor("#AFC7FF")
+        );
+        estrela.setTextSize(20);
+        estrela.setGravity(Gravity.CENTER);
+
+        LinearLayout.LayoutParams estrelaParams = new LinearLayout.LayoutParams(
+                dp(38),
+                LinearLayout.LayoutParams.MATCH_PARENT
+        );
+        estrela.setLayoutParams(estrelaParams);
+
+        LinearLayout info = new LinearLayout(this);
+        info.setOrientation(LinearLayout.VERTICAL);
+        info.setGravity(Gravity.CENTER_VERTICAL);
+        info.setLayoutParams(new LinearLayout.LayoutParams(
+                0,
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                1f
+        ));
 
         TextView nome = new TextView(this);
         nome.setText(
@@ -1509,26 +1537,35 @@ public class ServersActivity extends AppCompatActivity {
                         : servidor.name
         );
         nome.setTextColor(Color.WHITE);
-        nome.setTextSize(13);
+        nome.setTextSize(12);
         nome.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         nome.setSingleLine(true);
 
         TextView detalhes = new TextView(this);
-        detalhes.setText("Consultando players e idioma...");
-        detalhes.setTextColor(Color.parseColor("#768191"));
-        detalhes.setTextSize(9);
+        detalhes.setText("Consultando players, idioma e ping...");
+        detalhes.setTextColor(Color.parseColor("#7E8999"));
+        detalhes.setTextSize(8);
         detalhes.setSingleLine(true);
-        detalhes.setPadding(0, dp(5), 0, 0);
+        detalhes.setPadding(0, dp(3), 0, 0);
+
+        info.addView(nome);
+        info.addView(detalhes);
 
         TextView status = new TextView(this);
         status.setText("...");
         status.setTextColor(Color.parseColor("#8DB5FF"));
-        status.setTextSize(9);
+        status.setTextSize(8);
         status.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        status.setPadding(0, dp(5), 0, 0);
+        status.setGravity(Gravity.CENTER);
 
-        card.addView(nome);
-        card.addView(detalhes);
+        LinearLayout.LayoutParams statusParams = new LinearLayout.LayoutParams(
+                dp(86),
+                dp(38)
+        );
+        status.setLayoutParams(statusParams);
+
+        card.addView(estrela);
+        card.addView(info);
         card.addView(status);
 
         card.setOnClickListener(v -> {
@@ -1602,7 +1639,7 @@ public class ServersActivity extends AppCompatActivity {
 
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
-                dp(58)
+                dp(62)
         );
         params.topMargin = dp(7);
         card.setLayoutParams(params);
