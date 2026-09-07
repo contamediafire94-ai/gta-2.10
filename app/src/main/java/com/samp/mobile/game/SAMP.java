@@ -1,5 +1,6 @@
 package com.samp.mobile.game;
 
+import android.content.Context;
 import android.os.Bundle;
 import android.util.Log;
 import android.view.KeyEvent;
@@ -12,6 +13,10 @@ import com.samp.mobile.game.ui.CustomKeyboard;
 import com.samp.mobile.game.ui.LoadingScreen;
 import com.samp.mobile.game.ui.dialog.DialogManager;
 
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.io.UnsupportedEncodingException;
 import java.nio.charset.StandardCharsets;
 
@@ -51,6 +56,77 @@ public class SAMP extends GTASA implements
 
     public static SAMP getInstance() {
         return instance;
+    }
+
+    @Override
+    protected void attachBaseContext(Context newBase) {
+        super.attachBaseContext(newBase);
+
+        // V44:
+        // AMERICAN.GXT fica no armazenamento PRIVADO real do app
+        // (/data/user/0/com.samp.mobile/files/TEXT), fora do Android/data.
+        // Isso evita o EACCES/FUSE confirmado nos logs V43.
+        prepareAmericanGxtInternal(newBase);
+    }
+
+    private void prepareAmericanGxtInternal(Context context) {
+        File targetDir = new File(context.getFilesDir(), "TEXT");
+
+        if (!targetDir.exists() && !targetDir.mkdirs()) {
+            Log.e(TAG, "WIU-GXT: não foi possível criar " + targetDir.getAbsolutePath());
+            return;
+        }
+
+        File target = new File(targetDir, "AMERICAN.GXT");
+
+        String[] assetCandidates = new String[] {
+                "AMERICAN.GXT",
+                "TEXT/AMERICAN.GXT",
+                "Text/american.gxt"
+        };
+
+        Exception lastError = null;
+
+        for (String assetPath : assetCandidates) {
+            try (InputStream input = context.getAssets().open(assetPath);
+                 FileOutputStream output = new FileOutputStream(target, false)) {
+
+                byte[] buffer = new byte[8192];
+                int read;
+
+                while ((read = input.read(buffer)) != -1) {
+                    output.write(buffer, 0, read);
+                }
+
+                output.flush();
+
+                boolean readable = target.isFile()
+                        && target.length() > 0
+                        && target.canRead();
+
+                Log.i(
+                        TAG,
+                        "WIU-GXT: preparado interno | asset=" + assetPath
+                                + " | path=" + target.getAbsolutePath()
+                                + " | bytes=" + target.length()
+                                + " | canRead=" + readable
+                );
+
+                if (readable) {
+                    return;
+                }
+
+            } catch (Exception e) {
+                lastError = e;
+                Log.w(TAG, "WIU-GXT: asset não abriu: " + assetPath);
+            }
+        }
+
+        Log.e(
+                TAG,
+                "WIU-GXT: nenhum AMERICAN.GXT encontrado nos assets",
+                lastError
+        );
     }
 
     @Override
