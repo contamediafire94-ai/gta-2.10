@@ -73,6 +73,15 @@ public class SAMP extends GTASA implements
     }
 
     private void showLoadingScreen() {
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                if (mLoadingScreen != null) {
+                    mLoadingScreen.show();
+                    mLoadingScreen.setStatus("Carregando o jogo...");
+                }
+            }
+        });
     }
 
     private void hideLoadingScreen() {
@@ -80,8 +89,8 @@ public class SAMP extends GTASA implements
             @Override
             public void run() {
                 if (mLoadingScreen != null) {
-                    Log.i(TAG, "V15C: hideLoadingScreen -> hiding Java overlay");
-                    mLoadingScreen.hide();
+                    Log.i(TAG, "WIU: native pediu para esconder loading");
+                    mLoadingScreen.finishWhenReady("Entrando no servidor...");
                 }
             }
         });
@@ -233,7 +242,10 @@ public class SAMP extends GTASA implements
             @Override
             public void run() {
                 try {
-                    Log.i(TAG, "V15C: loading UI ready -> nativeAllowNetworkInit()");
+                    Log.i(TAG, "WIU: loading UI ready -> nativeAllowNetworkInit()");
+                    if (mLoadingScreen != null) {
+                        mLoadingScreen.setStatus("Preparando o SA-MP Mobile...");
+                    }
                     nativeAllowNetworkInit();
                 } catch (UnsatisfiedLinkError e) {
                     Log.e(TAG, "V15C: nativeAllowNetworkInit failed", e);
@@ -258,6 +270,10 @@ public class SAMP extends GTASA implements
 
                 if (!serverAddress.isEmpty()) {
                     Log.i(TAG, "Servidor recebido do launcher: " + serverAddress);
+                    if (mLoadingScreen != null) {
+                        mLoadingScreen.setServerAddress(serverAddress);
+                        mLoadingScreen.setStatus("Conectando ao servidor...");
+                    }
                     setLauncherServer(serverAddress);
                 }
             }
