@@ -6,6 +6,8 @@
 #include <errno.h>
 #include <string.h>
 #include <ctype.h>
+#include <dirent.h>
+#include <strings.h>
 #include "../main.h"
 #include "../vendor/armhook/patch.h"
 #include "game.h"
@@ -3028,6 +3030,79 @@ struct stFile
 char lastFile[123];
 static const char* WIU_INTERNAL_ROOT = "/data/user/0/com.samp.mobile/files/";
 
+static bool V48ResolveReadablePathCaseInsensitive(
+        const char* baseDir,
+        const char* relativePath,
+        char* outPath,
+        size_t outPathSize)
+{
+    if (!baseDir || !relativePath || !outPath || outPathSize == 0)
+        return false;
+
+    char current[255]{};
+    snprintf(current, sizeof(current), "%s", baseDir);
+
+    // Normaliza a base para nao terminar com "/" (exceto raiz).
+    size_t currentLen = strlen(current);
+    while (currentLen > 1 && current[currentLen - 1] == '/')
+    {
+        current[--currentLen] = '\0';
+    }
+
+    char relative[255]{};
+    snprintf(relative, sizeof(relative), "%s", relativePath);
+
+    char* savePtr = nullptr;
+    char* part = strtok_r(relative, "/", &savePtr);
+
+    while (part)
+    {
+        DIR* dir = opendir(current);
+        if (!dir)
+            return false;
+
+        bool found = false;
+        char realName[256]{};
+
+        while (dirent* entry = readdir(dir))
+        {
+            if (!strcasecmp(entry->d_name, part))
+            {
+                snprintf(realName, sizeof(realName), "%s", entry->d_name);
+                found = true;
+                break;
+            }
+        }
+
+        closedir(dir);
+
+        if (!found)
+            return false;
+
+        const size_t need =
+                strlen(current) + 1 + strlen(realName) + 1;
+
+        if (need > sizeof(current))
+            return false;
+
+        strcat(current, "/");
+        strcat(current, realName);
+
+        part = strtok_r(nullptr, "/", &savePtr);
+    }
+
+    // Confirma leitura real; nao basta o nome existir.
+    errno = 0;
+    FILE* check = fopen(current, "rb");
+    if (!check)
+        return false;
+
+    fclose(check);
+    snprintf(outPath, outPathSize, "%s", current);
+    return true;
+}
+
+
 stFile* NvFOpen(const char* r0, const char* r1, int r2, int r3)
 {
     strcpy(lastFile, r1);
@@ -3157,7 +3232,7 @@ stFile* NvFOpen(const char* r0, const char* r1, int r2, int r3)
         for (size_t i = 0; i < relLen; ++i)
             lowerRelative[i] = (char)tolower((unsigned char)relativeName[i]);
 
-        lowerRelative[relLen] = ' ';
+        lowerRelative[relLen] = '\0';
 
         char candidates[6][255]{};
 
@@ -3210,25 +3285,71 @@ stFile* NvFOpen(const char* r0, const char* r1, int r2, int r3)
     }
 
 
-    // Todo acesso a AUDIO/ ou audio/ vai para a copia criada pelo proprio app.
-    // Suporta audio_app/audio/... e audio_app/...
+    // V48 - AUDIO robusto.
+    //
+    // O V47 provou que a Data/TEXDB privada esta funcional, mas o audio podia
+    // existir apenas na copia externa ou com diferenca de maiusculas/minusculas
+    // (ex.: BANKSLOT.DAT x BankSlot.dat). O bloco antigo apenas testava
+    // audio_app/audio/... e depois FORCAVA audio_app/... sem confirmar leitura.
+    //
+    // Agora tentamos, em ordem:
+    //   1) privado: audio_app/...
+    //   2) privado legado: audio_app/audio/...
+    //   3) externo: audio_app/...
+    //   4) externo legado: audio_app/audio/...
+    //   5) externo antigo: audio/...
+    //   6) externo antigo: AUDIO/...
+    //
+    // Cada candidato e resolvido segmento por segmento ignorando case, mas o
+    // caminho final preserva o nome real do arquivo no filesystem.
     if (!strncmp(r1, "AUDIO/", 6) || !strncmp(r1, "audio/", 6))
     {
-        char audioPath[255]{};
-        snprintf(audioPath, sizeof(audioPath), "%saudio_app/audio/%s", WIU_INTERNAL_ROOT, r1 + 6);
+        const char* relativeAudio = r1 + 6;
 
-        FILE *audioCheck = fopen(audioPath, "rb");
-        if (audioCheck)
+        char audioBases[6][255]{};
+        snprintf(audioBases[0], sizeof(audioBases[0]),
+                 "%saudio_app", WIU_INTERNAL_ROOT);
+        snprintf(audioBases[1], sizeof(audioBases[1]),
+                 "%saudio_app/audio", WIU_INTERNAL_ROOT);
+        snprintf(audioBases[2], sizeof(audioBases[2]),
+                 "%saudio_app", g_pszStorage);
+        snprintf(audioBases[3], sizeof(audioBases[3]),
+                 "%saudio_app/audio", g_pszStorage);
+        snprintf(audioBases[4], sizeof(audioBases[4]),
+                 "%saudio", g_pszStorage);
+        snprintf(audioBases[5], sizeof(audioBases[5]),
+                 "%sAUDIO", g_pszStorage);
+
+        bool foundAudio = false;
+
+        for (int i = 0; i < 6; ++i)
         {
-            fclose(audioCheck);
-            sprintf(path, "%s", audioPath);
-        }
-        else
-        {
-            snprintf(path, sizeof(path), "%saudio_app/%s", WIU_INTERNAL_ROOT, r1 + 6);
+            char resolvedAudio[255]{};
+
+            if (V48ResolveReadablePathCaseInsensitive(
+                    audioBases[i],
+                    relativeAudio,
+                    resolvedAudio,
+                    sizeof(resolvedAudio)))
+            {
+                snprintf(path, sizeof(path), "%s", resolvedAudio);
+                FLog("V48 AUDIO selected | candidate=%d | request=%s | path=%s",
+                     i, r1, path);
+                foundAudio = true;
+                break;
+            }
         }
 
-        FLog("V45 Redirecting AUDIO INTERNAL -> %s", path);
+        if (!foundAudio)
+        {
+            // Fallback diagnostico canonico: mantem o local privado esperado.
+            // O NvFOpen abaixo vai registrar errno real no fopen final.
+            snprintf(path, sizeof(path), "%saudio_app/%s",
+                     WIU_INTERNAL_ROOT, relativeAudio);
+
+            FLog("V48 AUDIO no readable candidate | request=%s | fallback=%s",
+                 r1, path);
+        }
     }
 
     // ----------------------------
