@@ -59,6 +59,7 @@ public class ServersActivity extends AppCompatActivity {
     private TextView textSubtitle;
     private TextView textLauncherUsers;
     private TextView textLauncherStatus;
+    private TextView textListHeader;
 
     private LinearLayout serverListContainer;
     private LinearLayout featuredContainer;
@@ -69,6 +70,7 @@ public class ServersActivity extends AppCompatActivity {
     private Button buttonFavorites;
     private Button buttonDiscord;
     private Button buttonSettings;
+    private Button buttonAddServer;
     private EditText editNick;
 
     private int currentSection = 0;
@@ -83,6 +85,7 @@ public class ServersActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         aplicarModoImersivo();
         setContentView(R.layout.activity_servers);
+        getWindow().getDecorView().post(this::aplicarModoImersivo);
 
         prefs = getSharedPreferences("beta_tester_config", MODE_PRIVATE);
 
@@ -90,6 +93,7 @@ public class ServersActivity extends AppCompatActivity {
         textSubtitle = findViewById(R.id.text_subtitle);
         textLauncherUsers = findViewById(R.id.text_launcher_users);
         textLauncherStatus = findViewById(R.id.text_launcher_status);
+        textListHeader = findViewById(R.id.text_list_header);
 
         serverListContainer = findViewById(R.id.server_list_container);
         featuredContainer = findViewById(R.id.featured_container);
@@ -100,6 +104,7 @@ public class ServersActivity extends AppCompatActivity {
         buttonFavorites = findViewById(R.id.button_favorites);
         buttonDiscord = findViewById(R.id.button_discord);
         buttonSettings = findViewById(R.id.button_settings);
+        buttonAddServer = findViewById(R.id.button_add_server);
         buttonPlay = findViewById(R.id.button_play);
         editNick = findViewById(R.id.edit_nick);
 
@@ -126,6 +131,7 @@ public class ServersActivity extends AppCompatActivity {
         editNick.setText(prefs.getString("nickname", ""));
 
         buttonPlay.setOnClickListener(v -> jogarServidorSelecionado());
+        buttonAddServer.setOnClickListener(v -> abrirDialogAdicionarServidor());
 
         buttonServers.setOnClickListener(v -> mostrarListaServidores());
         buttonFavorites.setOnClickListener(v -> mostrarFavoritos());
@@ -154,36 +160,55 @@ public class ServersActivity extends AppCompatActivity {
     }
 
     private void aplicarModoImersivo() {
+        try {
+            getWindow().addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
+            getWindow().setStatusBarColor(Color.TRANSPARENT);
+            getWindow().setNavigationBarColor(Color.TRANSPARENT);
+        } catch (Exception ignored) {
+        }
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            getWindow().setDecorFitsSystemWindows(false);
+            try {
+                getWindow().setDecorFitsSystemWindows(false);
+                WindowInsetsController controller = getWindow().getInsetsController();
 
-            WindowInsetsController controller = getWindow().getInsetsController();
+                if (controller != null) {
+                    controller.hide(
+                            WindowInsets.Type.statusBars()
+                                    | WindowInsets.Type.navigationBars()
+                    );
+                    controller.setSystemBarsBehavior(
+                            WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                    );
+                }
+            } catch (Exception ignored) {
+            }
+        }
 
-            if (controller != null) {
-                controller.hide(
-                        WindowInsets.Type.statusBars()
-                                | WindowInsets.Type.navigationBars()
-                );
-                controller.setSystemBarsBehavior(
-                        WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        View decor = getWindow().getDecorView();
+        decor.setSystemUiVisibility(
+                View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                        | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                        | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                        | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                        | View.SYSTEM_UI_FLAG_FULLSCREEN
+                        | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+        );
+
+        decor.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                View d = getWindow().getDecorView();
+                d.setSystemUiVisibility(
+                        View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                                | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                                | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                                | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                                | View.SYSTEM_UI_FLAG_FULLSCREEN
+                                | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
                 );
             }
-        } else {
-            getWindow().setFlags(
-                    WindowManager.LayoutParams.FLAG_FULLSCREEN,
-                    WindowManager.LayoutParams.FLAG_FULLSCREEN
-            );
-
-            View decor = getWindow().getDecorView();
-            decor.setSystemUiVisibility(
-                    View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-                            | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
-                            | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-                            | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
-                            | View.SYSTEM_UI_FLAG_FULLSCREEN
-                            | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
-            );
-        }
+        }, 250);
     }
 
     private void mostrarListaServidores() {
@@ -201,7 +226,7 @@ public class ServersActivity extends AppCompatActivity {
         atualizarStatusLauncher();
 
         definirTituloLista("TODOS OS SERVIDORES");
-        adicionarBotaoAdicionarServidor();
+        buttonAddServer.setVisibility(View.VISIBLE);
 
         for (ServerItem servidor : carregarTodosServidores()) {
             adicionarCardServidor(servidor);
@@ -221,6 +246,7 @@ public class ServersActivity extends AppCompatActivity {
         atualizarFavoritosPreview();
         atualizarStatusLauncher();
         definirTituloLista("MEUS FAVORITOS");
+        buttonAddServer.setVisibility(View.GONE);
 
         Set<String> favoritos = carregarFavoritos();
         int encontrados = 0;
@@ -258,6 +284,7 @@ public class ServersActivity extends AppCompatActivity {
         atualizarFavoritosPreview();
         atualizarStatusLauncher();
         definirTituloLista("PERFIL DO JOGADOR");
+        buttonAddServer.setVisibility(View.GONE);
 
         TextView labelNick = criarLabel("NICKNAME PADRÃO");
         serverListContainer.addView(labelNick);
@@ -431,31 +458,15 @@ public class ServersActivity extends AppCompatActivity {
     }
 
     private void definirTituloLista(String texto) {
-        TextView titulo = criarLabel(texto);
-        serverListContainer.addView(titulo);
+        if (textListHeader != null) {
+            textListHeader.setText(texto);
+        }
     }
 
     private void adicionarBotaoAdicionarServidor() {
-        Button adicionar = new Button(this);
-        adicionar.setText("+  ADICIONAR SERVIDOR");
-        adicionar.setTextColor(Color.WHITE);
-        adicionar.setTextSize(11);
-        adicionar.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        adicionar.setAllCaps(false);
-        adicionar.setBackgroundTintList(
-                ColorStateList.valueOf(Color.parseColor("#202631"))
-        );
-
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
-                dp(220),
-                dp(38)
-        );
-        params.topMargin = dp(10);
-        adicionar.setLayoutParams(params);
-
-        adicionar.setOnClickListener(v -> abrirDialogAdicionarServidor());
-
-        serverListContainer.addView(adicionar);
+        if (buttonAddServer != null) {
+            buttonAddServer.setVisibility(View.VISIBLE);
+        }
     }
 
     private void abrirDialogAdicionarServidor() {
@@ -526,7 +537,7 @@ public class ServersActivity extends AppCompatActivity {
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.HORIZONTAL);
         card.setGravity(Gravity.CENTER_VERTICAL);
-        card.setPadding(dp(12), dp(7), dp(4), dp(7));
+        card.setPadding(dp(12), dp(8), dp(4), dp(8));
         card.setBackground(criarFundoArredondado("#171C24", 12));
         card.setClickable(true);
         card.setFocusable(true);
@@ -556,7 +567,7 @@ public class ServersActivity extends AppCompatActivity {
                         : servidor.name
         );
         nome.setTextColor(Color.WHITE);
-        nome.setTextSize(14);
+        nome.setTextSize(13);
         nome.setSingleLine(true);
         nome.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
 
@@ -584,8 +595,8 @@ public class ServersActivity extends AppCompatActivity {
         status.setGravity(Gravity.CENTER);
 
         LinearLayout.LayoutParams statusParams = new LinearLayout.LayoutParams(
-                dp(92),
-                dp(38)
+                dp(78),
+                dp(36)
         );
         status.setLayoutParams(statusParams);
 
@@ -605,8 +616,8 @@ public class ServersActivity extends AppCompatActivity {
         favorito.setMinHeight(0);
 
         LinearLayout.LayoutParams favParams = new LinearLayout.LayoutParams(
-                dp(42),
-                dp(42)
+                dp(36),
+                dp(36)
         );
         favorito.setLayoutParams(favParams);
 
@@ -623,8 +634,8 @@ public class ServersActivity extends AppCompatActivity {
         menu.setMinHeight(0);
 
         LinearLayout.LayoutParams menuParams = new LinearLayout.LayoutParams(
-                dp(42),
-                dp(42)
+                dp(36),
+                dp(36)
         );
         menu.setLayoutParams(menuParams);
 
@@ -1505,7 +1516,7 @@ public class ServersActivity extends AppCompatActivity {
         TextView detalhes = new TextView(this);
         detalhes.setText("Consultando players e idioma...");
         detalhes.setTextColor(Color.parseColor("#768191"));
-        detalhes.setTextSize(10);
+        detalhes.setTextSize(9);
         detalhes.setSingleLine(true);
         detalhes.setPadding(0, dp(5), 0, 0);
 
