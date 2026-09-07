@@ -3152,17 +3152,18 @@ stFile* NvFOpen(const char* r0, const char* r1, int r2, int r3)
         }
     }
 
-    // V51 - arquivos .IMG da pasta TEXDB no armazenamento interno.
-    // Ex.: TEXDB/GTA3.IMG -> /data/user/0/.../files/texdb_img_app/GTA3.IMG
-    // Mantemos isto separado do bloco "texdb/" (minúsculo), que trata os
-    // arquivos .txt/.dat/.tmb/.toc usados pelo texdb mobile.
-    if (!strncmp(r1, "TEXDB/", 6))
+    // V51 - TEXDB/*.IMG ja esta dentro de texdb_app/texdb.
+    // A BetaTesterData do usuario possui as pastas de textura e os arquivos
+    // gta3.img, gta_int.img, samp.img, SAMPCOL.img, cutscene.img, player.img
+    // todos na MESMA pasta texdb. Portanto nao criamos uma segunda pasta.
+    if (!strncasecmp(r1, "TEXDB/", 6))
     {
         char resolvedTexdbImg[255]{};
+        const char* relativeTexdb = r1 + 6;
 
         if (V48ResolveReadablePathCaseInsensitive(
-                "/data/user/0/com.samp.mobile/files/texdb_img_app",
-                r1 + 6,
+                "/data/user/0/com.samp.mobile/files/texdb_app/texdb/",
+                relativeTexdb,
                 resolvedTexdbImg,
                 sizeof(resolvedTexdbImg)))
         {
