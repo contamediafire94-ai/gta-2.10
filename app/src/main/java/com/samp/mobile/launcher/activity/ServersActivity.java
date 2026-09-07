@@ -5,9 +5,12 @@ import android.content.SharedPreferences;
 import android.content.res.ColorStateList;
 import android.graphics.Color;
 import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
+import android.net.Uri;
 import android.os.Bundle;
 import android.text.InputType;
 import android.view.Gravity;
+import android.view.View;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
@@ -43,14 +46,24 @@ public class ServersActivity extends AppCompatActivity {
     private static final String PREF_TEST_SERVER_ADDRESS = "test_server_address_override";
     private static final String PREF_TEST_SERVER_HIDDEN = "test_server_hidden";
 
+    // Coloque aqui o convite oficial da sua comunidade quando quiser ativar o botão.
+    private static final String DISCORD_URL = "";
+
     private SharedPreferences prefs;
 
     private TextView textTitle;
     private TextView textSubtitle;
+    private TextView textLauncherUsers;
+    private TextView textLauncherStatus;
+
     private LinearLayout serverListContainer;
+    private LinearLayout featuredContainer;
+    private LinearLayout favoritesPreviewContainer;
+    private LinearLayout featuredBlock;
 
     private Button buttonServers;
     private Button buttonFavorites;
+    private Button buttonDiscord;
     private Button buttonSettings;
     private EditText editNick;
 
@@ -70,22 +83,38 @@ public class ServersActivity extends AppCompatActivity {
 
         textTitle = findViewById(R.id.text_title);
         textSubtitle = findViewById(R.id.text_subtitle);
+        textLauncherUsers = findViewById(R.id.text_launcher_users);
+        textLauncherStatus = findViewById(R.id.text_launcher_status);
+
         serverListContainer = findViewById(R.id.server_list_container);
+        featuredContainer = findViewById(R.id.featured_container);
+        favoritesPreviewContainer = findViewById(R.id.favorites_preview_container);
+        featuredBlock = findViewById(R.id.featured_block);
 
         buttonServers = findViewById(R.id.button_servers);
         buttonFavorites = findViewById(R.id.button_favorites);
+        buttonDiscord = findViewById(R.id.button_discord);
         buttonSettings = findViewById(R.id.button_settings);
         buttonPlay = findViewById(R.id.button_play);
         editNick = findViewById(R.id.edit_nick);
 
         selectedServerAddress = prefs.getString("server_address", "");
 
-        if (selectedServerAddress.trim().isEmpty()) {
-            List<ServerItem> iniciais = carregarTodosServidores();
+        List<ServerItem> iniciais = carregarTodosServidores();
 
+        if (selectedServerAddress.trim().isEmpty()) {
             if (!iniciais.isEmpty()) {
                 selectedServerAddress = iniciais.get(0).address;
                 selectedServerName = iniciais.get(0).name;
+            }
+        } else {
+            for (ServerItem servidor : iniciais) {
+                if (servidor.address.equalsIgnoreCase(selectedServerAddress)) {
+                    selectedServerName = servidor.name.isEmpty()
+                            ? servidor.address
+                            : servidor.name;
+                    break;
+                }
             }
         }
 
@@ -95,8 +124,11 @@ public class ServersActivity extends AppCompatActivity {
 
         buttonServers.setOnClickListener(v -> mostrarListaServidores());
         buttonFavorites.setOnClickListener(v -> mostrarFavoritos());
+        buttonDiscord.setOnClickListener(v -> abrirDiscord());
         buttonSettings.setOnClickListener(v -> mostrarConfiguracoes());
 
+        prepararContadorLauncher();
+        atualizarStatusLauncher();
         mostrarListaServidores();
     }
 
@@ -104,11 +136,17 @@ public class ServersActivity extends AppCompatActivity {
         currentSection = 0;
 
         textTitle.setText("Servidores");
-        textSubtitle.setText("Escolha, favorite ou adicione um servidor");
+        textSubtitle.setText("Escolha um servidor e entre direto pelo launcher");
+
+        featuredBlock.setVisibility(View.VISIBLE);
 
         atualizarDestaqueMenu();
         limparLista();
-        definirTituloLista("LISTA DE SERVIDORES");
+        atualizarDestaques();
+        atualizarFavoritosPreview();
+        atualizarStatusLauncher();
+
+        definirTituloLista("TODOS OS SERVIDORES");
         adicionarBotaoAdicionarServidor();
 
         for (ServerItem servidor : carregarTodosServidores()) {
@@ -120,11 +158,15 @@ public class ServersActivity extends AppCompatActivity {
         currentSection = 1;
 
         textTitle.setText("Favoritos");
-        textSubtitle.setText("Seus servidores favoritos");
+        textSubtitle.setText("Seus servidores salvos");
+
+        featuredBlock.setVisibility(View.GONE);
 
         atualizarDestaqueMenu();
         limparLista();
-        definirTituloLista("SERVIDORES FAVORITOS");
+        atualizarFavoritosPreview();
+        atualizarStatusLauncher();
+        definirTituloLista("MEUS FAVORITOS");
 
         Set<String> favoritos = carregarFavoritos();
         int encontrados = 0;
@@ -140,7 +182,7 @@ public class ServersActivity extends AppCompatActivity {
             TextView vazio = new TextView(this);
             vazio.setText(
                     "Você ainda não favoritou nenhum servidor.\n" +
-                    "Volte em SERVIDORES e toque na estrela ★."
+                    "Volte em INÍCIO e toque na estrela ★."
             );
             vazio.setTextColor(Color.parseColor("#7F8998"));
             vazio.setTextSize(14);
@@ -153,10 +195,14 @@ public class ServersActivity extends AppCompatActivity {
         currentSection = 2;
 
         textTitle.setText("Configurações");
-        textSubtitle.setText("Ajustes do Wiu Launcher");
+        textSubtitle.setText("Ajustes do launcher");
+
+        featuredBlock.setVisibility(View.GONE);
 
         atualizarDestaqueMenu();
         limparLista();
+        atualizarFavoritosPreview();
+        atualizarStatusLauncher();
         definirTituloLista("PERFIL DO JOGADOR");
 
         TextView labelNick = criarLabel("NICKNAME PADRÃO");
@@ -318,6 +364,12 @@ public class ServersActivity extends AppCompatActivity {
         buttonSettings.setBackgroundTintList(
                 ColorStateList.valueOf(currentSection == 2 ? ativo : inativo)
         );
+
+        if (buttonDiscord != null) {
+            buttonDiscord.setBackgroundTintList(
+                    ColorStateList.valueOf(inativo)
+            );
+        }
     }
 
     private void limparLista() {
@@ -447,7 +499,7 @@ public class ServersActivity extends AppCompatActivity {
         card.setOrientation(LinearLayout.HORIZONTAL);
         card.setGravity(Gravity.CENTER_VERTICAL);
         card.setPadding(dp(14), dp(7), dp(6), dp(7));
-        card.setBackgroundColor(Color.parseColor("#171C24"));
+        card.setBackground(criarFundoArredondado("#171C24", 12));
         card.setClickable(true);
         card.setFocusable(true);
 
@@ -562,6 +614,7 @@ public class ServersActivity extends AppCompatActivity {
                     .apply();
 
             textSubtitle.setText("Selecionado: " + selectedServerName);
+            atualizarStatusLauncher();
 
             Toast.makeText(
                     this,
@@ -587,6 +640,8 @@ public class ServersActivity extends AppCompatActivity {
                             : "Removido dos favoritos",
                     Toast.LENGTH_SHORT
             ).show();
+
+            atualizarFavoritosPreview();
 
             if (currentSection == 1 && !agoraFavorito) {
                 mostrarFavoritos();
@@ -909,6 +964,8 @@ public class ServersActivity extends AppCompatActivity {
         prefs.edit()
                 .putString("server_address", selectedServerAddress)
                 .apply();
+
+        atualizarStatusLauncher();
     }
 
     private boolean servidorJaExisteExceto(
@@ -1110,14 +1167,16 @@ public class ServersActivity extends AppCompatActivity {
             DatagramSocket socket = null;
 
             try {
-                String[] partes = enderecoServidor.split(":");
+                int separador = enderecoServidor.lastIndexOf(':');
 
-                if (partes.length != 2) {
+                if (separador <= 0 || separador >= enderecoServidor.length() - 1) {
                     throw new Exception("Endereço inválido");
                 }
 
-                String host = partes[0].trim();
-                int porta = Integer.parseInt(partes[1].trim());
+                String host = enderecoServidor.substring(0, separador).trim();
+                int porta = Integer.parseInt(
+                        enderecoServidor.substring(separador + 1).trim()
+                );
 
                 InetAddress inetAddress = InetAddress.getByName(host);
                 byte[] ip = inetAddress.getAddress();
@@ -1195,10 +1254,48 @@ public class ServersActivity extends AppCompatActivity {
                             : nomeFallback;
                 }
 
+                int offset = 20 + tamanhoNome;
+                String idioma = "Idioma não informado";
+
+                // Depois do hostname vêm gamemode e language no query 'i'.
+                if (offset + 4 <= tamanho) {
+                    int tamanhoGameMode = lerIntLE(resposta, offset);
+                    offset += 4;
+
+                    if (tamanhoGameMode >= 0
+                            && tamanhoGameMode <= 512
+                            && offset + tamanhoGameMode <= tamanho) {
+                        offset += tamanhoGameMode;
+
+                        if (offset + 4 <= tamanho) {
+                            int tamanhoIdioma = lerIntLE(resposta, offset);
+                            offset += 4;
+
+                            if (tamanhoIdioma >= 0
+                                    && tamanhoIdioma <= 256
+                                    && offset + tamanhoIdioma <= tamanho) {
+                                String idiomaDetectado = new String(
+                                        resposta,
+                                        offset,
+                                        tamanhoIdioma,
+                                        Charset.forName("windows-1252")
+                                ).trim();
+
+                                if (!idiomaDetectado.isEmpty()) {
+                                    idioma = idiomaDetectado;
+                                }
+                            }
+                        }
+                    }
+                }
+
                 final String nomeFinal = nomeDetectado;
+                final String idiomaFinal = idioma;
                 final String detalheTexto =
                         jogadores + "/" + maxJogadores
-                                + " jogadores  •  "
+                                + " players  •  "
+                                + idiomaFinal
+                                + "  •  "
                                 + ping + " ms";
 
                 runOnUiThread(() -> {
@@ -1223,13 +1320,13 @@ public class ServersActivity extends AppCompatActivity {
                 runOnUiThread(() -> {
                     nomeView.setText(fallback);
 
-                    statusView.setText("OFFLINE");
+                    statusView.setText("SEM RESPOSTA");
                     statusView.setTextColor(
-                            Color.parseColor("#E86A6A")
+                            Color.parseColor("#E8A85A")
                     );
 
                     detalhesView.setText(
-                            "Sem resposta do servidor"
+                            "Query indisponível • tente conectar normalmente"
                     );
                     detalhesView.setTextColor(
                             Color.parseColor("#626C7A")
@@ -1241,6 +1338,297 @@ public class ServersActivity extends AppCompatActivity {
                 }
             }
         }).start();
+    }
+
+    private void abrirDiscord() {
+        if (DISCORD_URL == null || DISCORD_URL.trim().isEmpty()) {
+            Toast.makeText(
+                    this,
+                    "Link do Discord ainda não configurado.",
+                    Toast.LENGTH_SHORT
+            ).show();
+            return;
+        }
+
+        try {
+            Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(DISCORD_URL));
+            startActivity(intent);
+        } catch (Exception e) {
+            Toast.makeText(
+                    this,
+                    "Não foi possível abrir o Discord.",
+                    Toast.LENGTH_SHORT
+            ).show();
+        }
+    }
+
+    private void prepararContadorLauncher() {
+        /*
+         * O campo visual já está pronto.
+         * O número real precisa vir do seu backend por heartbeat/API.
+         * Enquanto o endpoint não estiver ligado, não inventamos contagem.
+         */
+        if (textLauncherUsers != null) {
+            textLauncherUsers.setText("●  — usando o launcher");
+            textLauncherUsers.setTextColor(Color.parseColor("#55D98B"));
+        }
+    }
+
+    private void atualizarStatusLauncher() {
+        if (textLauncherStatus == null) {
+            return;
+        }
+
+        int quantidade = carregarTodosServidores().size();
+        boolean selecionado = selectedServerAddress != null
+                && !selectedServerAddress.trim().isEmpty();
+
+        String status =
+                "✓  Lista carregada (" + quantidade + ")\\n" +
+                "✓  Cliente SA-MP integrado\\n" +
+                "✓  Loading personalizado\\n" +
+                (selecionado
+                        ? "✓  Servidor selecionado"
+                        : "○  Selecione um servidor");
+
+        textLauncherStatus.setText(status);
+    }
+
+    private void atualizarDestaques() {
+        if (featuredContainer == null) {
+            return;
+        }
+
+        featuredContainer.removeAllViews();
+
+        List<ServerItem> servidores = carregarTodosServidores();
+
+        if (servidores.isEmpty()) {
+            TextView vazio = new TextView(this);
+            vazio.setText("Adicione servidores para aparecerem aqui.");
+            vazio.setTextColor(Color.parseColor("#6F7886"));
+            vazio.setTextSize(12);
+            featuredContainer.addView(vazio);
+            return;
+        }
+
+        Set<String> favoritos = carregarFavoritos();
+        List<ServerItem> ordenados = new ArrayList<>();
+
+        // Favoritos aparecem primeiro como destaques.
+        for (ServerItem servidor : servidores) {
+            if (favoritos.contains(servidor.address)) {
+                ordenados.add(servidor);
+            }
+        }
+
+        for (ServerItem servidor : servidores) {
+            if (!ordenados.contains(servidor)) {
+                ordenados.add(servidor);
+            }
+        }
+
+        int limite = Math.min(3, ordenados.size());
+
+        for (int i = 0; i < limite; i++) {
+            adicionarCardDestaque(ordenados.get(i));
+        }
+    }
+
+    private void adicionarCardDestaque(ServerItem servidor) {
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setGravity(Gravity.CENTER_VERTICAL);
+        card.setPadding(dp(14), dp(10), dp(14), dp(10));
+        card.setBackground(criarFundoArredondado("#151B24", 12));
+        card.setClickable(true);
+        card.setFocusable(true);
+
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                dp(300),
+                dp(84)
+        );
+        params.rightMargin = dp(10);
+        card.setLayoutParams(params);
+
+        TextView nome = new TextView(this);
+        nome.setText(
+                servidor.name.isEmpty()
+                        ? "Detectando nome..."
+                        : servidor.name
+        );
+        nome.setTextColor(Color.WHITE);
+        nome.setTextSize(13);
+        nome.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        nome.setSingleLine(true);
+
+        TextView detalhes = new TextView(this);
+        detalhes.setText("Consultando players e idioma...");
+        detalhes.setTextColor(Color.parseColor("#768191"));
+        detalhes.setTextSize(10);
+        detalhes.setSingleLine(true);
+        detalhes.setPadding(0, dp(5), 0, 0);
+
+        TextView status = new TextView(this);
+        status.setText("...");
+        status.setTextColor(Color.parseColor("#8DB5FF"));
+        status.setTextSize(9);
+        status.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        status.setPadding(0, dp(5), 0, 0);
+
+        card.addView(nome);
+        card.addView(detalhes);
+        card.addView(status);
+
+        card.setOnClickListener(v -> {
+            selectedServerAddress = servidor.address;
+            selectedServerName = nome.getText().toString();
+
+            prefs.edit()
+                    .putString("server_address", selectedServerAddress)
+                    .apply();
+
+            textSubtitle.setText("Selecionado: " + selectedServerName);
+            atualizarStatusLauncher();
+
+            Toast.makeText(
+                    this,
+                    selectedServerName + " selecionado",
+                    Toast.LENGTH_SHORT
+            ).show();
+        });
+
+        featuredContainer.addView(card);
+
+        consultarServidor(
+                servidor.address,
+                nome,
+                status,
+                detalhes,
+                servidor.name
+        );
+    }
+
+    private void atualizarFavoritosPreview() {
+        if (favoritesPreviewContainer == null) {
+            return;
+        }
+
+        favoritesPreviewContainer.removeAllViews();
+
+        Set<String> favoritos = carregarFavoritos();
+        int adicionados = 0;
+
+        for (ServerItem servidor : carregarTodosServidores()) {
+            if (!favoritos.contains(servidor.address)) {
+                continue;
+            }
+
+            adicionarCardFavoritoPreview(servidor);
+            adicionados++;
+
+            if (adicionados >= 4) {
+                break;
+            }
+        }
+
+        if (adicionados == 0) {
+            TextView vazio = new TextView(this);
+            vazio.setText("Nenhum servidor favoritado.");
+            vazio.setTextColor(Color.parseColor("#6F7886"));
+            vazio.setTextSize(11);
+            vazio.setPadding(dp(2), dp(8), 0, 0);
+            favoritesPreviewContainer.addView(vazio);
+        }
+    }
+
+    private void adicionarCardFavoritoPreview(ServerItem servidor) {
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.HORIZONTAL);
+        card.setGravity(Gravity.CENTER_VERTICAL);
+        card.setPadding(dp(10), dp(6), dp(6), dp(6));
+        card.setBackground(criarFundoArredondado("#171C24", 10));
+
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                dp(58)
+        );
+        params.topMargin = dp(7);
+        card.setLayoutParams(params);
+
+        LinearLayout info = new LinearLayout(this);
+        info.setOrientation(LinearLayout.VERTICAL);
+        info.setGravity(Gravity.CENTER_VERTICAL);
+        info.setLayoutParams(new LinearLayout.LayoutParams(
+                0,
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                1f
+        ));
+
+        TextView nome = new TextView(this);
+        nome.setText(
+                servidor.name.isEmpty()
+                        ? "Detectando..."
+                        : servidor.name
+        );
+        nome.setTextColor(Color.WHITE);
+        nome.setTextSize(11);
+        nome.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        nome.setSingleLine(true);
+
+        TextView detalhes = new TextView(this);
+        detalhes.setText("Consultando...");
+        detalhes.setTextColor(Color.parseColor("#6F7886"));
+        detalhes.setTextSize(8);
+        detalhes.setSingleLine(true);
+
+        info.addView(nome);
+        info.addView(detalhes);
+
+        TextView status = new TextView(this);
+        status.setText("...");
+        status.setTextColor(Color.parseColor("#8DB5FF"));
+        status.setTextSize(8);
+        status.setGravity(Gravity.CENTER);
+
+        LinearLayout.LayoutParams statusParams = new LinearLayout.LayoutParams(
+                dp(78),
+                LinearLayout.LayoutParams.MATCH_PARENT
+        );
+        status.setLayoutParams(statusParams);
+
+        card.addView(info);
+        card.addView(status);
+
+        card.setOnClickListener(v -> {
+            selectedServerAddress = servidor.address;
+            selectedServerName = nome.getText().toString();
+
+            prefs.edit()
+                    .putString("server_address", selectedServerAddress)
+                    .apply();
+
+            textSubtitle.setText("Selecionado: " + selectedServerName);
+            atualizarStatusLauncher();
+        });
+
+        favoritesPreviewContainer.addView(card);
+
+        consultarServidor(
+                servidor.address,
+                nome,
+                status,
+                detalhes,
+                servidor.name
+        );
+    }
+
+    private GradientDrawable criarFundoArredondado(String cor, int raioDp) {
+        GradientDrawable fundo = new GradientDrawable();
+        fundo.setColor(Color.parseColor(cor));
+        fundo.setCornerRadius(dp(raioDp));
+        fundo.setStroke(dp(1), Color.parseColor("#222A36"));
+        return fundo;
     }
 
     private int lerUnsignedShortLE(byte[] dados, int offset) {
