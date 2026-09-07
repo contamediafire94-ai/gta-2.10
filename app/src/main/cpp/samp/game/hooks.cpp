@@ -5,6 +5,7 @@
 #include <sys/syscall.h>
 #include <errno.h>
 #include <string.h>
+#include <ctype.h>
 #include "../main.h"
 #include "../vendor/armhook/patch.h"
 #include "game.h"
@@ -3138,26 +3139,74 @@ stFile* NvFOpen(const char* r0, const char* r1, int r2, int r3)
         FLog("V45 Redirecting TEXDB INTERNAL -> %s", path);
     }
 
-    // Todo acesso a data/ ou DATA/ vai para a copia criada pelo proprio app.
-    // Suporta as duas estruturas possiveis:
-    // data_app/data/...  ou  data_app/...
+    // V47 - DATA interno robusto + compatibilidade com nomes minusculos.
+    //
+    // A BetaTesterData usa nomes como "fonts.dat", enquanto o GTA pode pedir
+    // "DATA/FONTS.DAT". O armazenamento interno do Android e case-sensitive,
+    // entao testamos tanto o nome original quanto a versao em minusculas.
     if (!strncmp(r1, "data/", 5) || !strncmp(r1, "DATA/", 5))
     {
-        char dataPath[255]{};
-        snprintf(dataPath, sizeof(dataPath), "%sdata_app/data/%s", WIU_INTERNAL_ROOT, r1 + 5);
+        const char* relativeName = r1 + 5;
 
-        FILE *dataCheck = fopen(dataPath, "rb");
-        if (dataCheck)
+        char lowerRelative[180]{};
+        size_t relLen = strlen(relativeName);
+
+        if (relLen >= sizeof(lowerRelative))
+            relLen = sizeof(lowerRelative) - 1;
+
+        for (size_t i = 0; i < relLen; ++i)
+            lowerRelative[i] = (char)tolower((unsigned char)relativeName[i]);
+
+        lowerRelative[relLen] = ' ';
+
+        char candidates[6][255]{};
+
+        // Estrutura V46 atual: conteudo de BetaTesterData/data -> data_app/
+        snprintf(candidates[0], sizeof(candidates[0]),
+                 "%sdata_app/%s", WIU_INTERNAL_ROOT, relativeName);
+        snprintf(candidates[1], sizeof(candidates[1]),
+                 "%sdata_app/%s", WIU_INTERNAL_ROOT, lowerRelative);
+
+        // Compatibilidade com importacoes anteriores.
+        snprintf(candidates[2], sizeof(candidates[2]),
+                 "%sdata_app/data/%s", WIU_INTERNAL_ROOT, relativeName);
+        snprintf(candidates[3], sizeof(candidates[3]),
+                 "%sdata_app/data/%s", WIU_INTERNAL_ROOT, lowerRelative);
+        snprintf(candidates[4], sizeof(candidates[4]),
+                 "%sdata_app/data/data/%s", WIU_INTERNAL_ROOT, relativeName);
+        snprintf(candidates[5], sizeof(candidates[5]),
+                 "%sdata_app/data/data/%s", WIU_INTERNAL_ROOT, lowerRelative);
+
+        bool foundData = false;
+
+        for (int i = 0; i < 6; ++i)
         {
-            fclose(dataCheck);
-            sprintf(path, "%s", dataPath);
-        }
-        else
-        {
-            snprintf(path, sizeof(path), "%sdata_app/%s", WIU_INTERNAL_ROOT, r1 + 5);
+            errno = 0;
+            FILE* dataCheck = fopen(candidates[i], "rb");
+
+            if (dataCheck)
+            {
+                fclose(dataCheck);
+                snprintf(path, sizeof(path), "%s", candidates[i]);
+
+                FLog("V47 DATA selected | %s", path);
+                foundData = true;
+                break;
+            }
+
+            const int dataErr = errno;
+            FLog("V47 DATA candidate FAIL | path=%s | errno=%d | %s",
+                 candidates[i], dataErr, strerror(dataErr));
         }
 
-        FLog("V45 Redirecting DATA INTERNAL -> %s", path);
+        if (!foundData)
+        {
+            // Mantem o caminho em minusculas como melhor fallback para a Data atual.
+            snprintf(path, sizeof(path), "%sdata_app/%s",
+                     WIU_INTERNAL_ROOT, lowerRelative);
+
+            FLog("V47 DATA no readable candidate | %s", path);
+        }
     }
 
 
