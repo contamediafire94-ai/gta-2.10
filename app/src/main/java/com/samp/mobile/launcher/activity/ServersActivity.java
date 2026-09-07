@@ -1,7 +1,10 @@
 package com.samp.mobile.launcher.activity;
 
+import android.app.ProgressDialog;
+import android.content.ContentResolver;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.database.Cursor;
 import android.content.res.ColorStateList;
 import android.graphics.Color;
 import android.graphics.Typeface;
@@ -9,6 +12,7 @@ import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.provider.DocumentsContract;
 import android.text.InputType;
 import android.view.Gravity;
 import android.view.View;
@@ -31,6 +35,10 @@ import com.samp.mobile.game.SAMP;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
@@ -49,6 +57,10 @@ public class ServersActivity extends AppCompatActivity {
     private static final String PREF_FAVORITES = "favorite_servers";
     private static final String PREF_TEST_SERVER_ADDRESS = "test_server_address_override";
     private static final String PREF_TEST_SERVER_HIDDEN = "test_server_hidden";
+
+    // V45 - DATA privada interna
+    private static final int REQUEST_INTERNAL_DATA_FOLDER = 9045;
+    private static final String PREF_INTERNAL_DATA_READY = "wiu_internal_data_v45";
 
     // Coloque aqui o convite oficial da sua comunidade quando quiser ativar o botão.
     private static final String DISCORD_URL = "";
@@ -79,6 +91,9 @@ public class ServersActivity extends AppCompatActivity {
     private String selectedServerAddress = TEST_SERVER_ADDRESS;
     private String selectedServerName = TEST_SERVER_NAME;
     private Button buttonPlay;
+
+    private ProgressDialog dataImportDialog;
+    private boolean playAfterDataImport = false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -130,7 +145,7 @@ public class ServersActivity extends AppCompatActivity {
 
         editNick.setText(prefs.getString("nickname", ""));
 
-        buttonPlay.setOnClickListener(v -> jogarServidorSelecionado());
+        buttonPlay.setOnClickListener(v -> iniciarJogoComDataSegura());
         buttonAddServer.setOnClickListener(v -> abrirDialogAdicionarServidor());
         buttonAddServer.setBackgroundTintList(
                 ColorStateList.valueOf(Color.parseColor("#2D6CDF"))
@@ -1037,6 +1052,532 @@ public class ServersActivity extends AppCompatActivity {
         }
 
         return host + ":" + porta;
+    }
+
+
+    // -------------------------------------------------------------------------
+    // V45 - Importação da BetaTesterData para o armazenamento PRIVADO do app.
+    //
+    // Origem escolhida pelo usuário:
+    // BetaTesterData/
+    //   anim, audio, data, models, SAMP, texdb, CINFO.BIN, stream.ini
+    //
+    // Destino:
+    // /data/user/0/com.samp.mobile/files/
+    // Isso evita o EACCES/FUSE confirmado em Android/data.
+    // -------------------------------------------------------------------------
+
+    private void iniciarJogoComDataSegura() {
+        if (isInternalDataReady()) {
+            jogarServidorSelecionado();
+            return;
+        }
+
+        playAfterDataImport = true;
+
+        new AlertDialog.Builder(this)
+                .setTitle("Instalar arquivos do jogo")
+                .setMessage(
+                        "Selecione a pasta BetaTesterData que contém:\n\n" +
+                        "anim • audio • data • models • SAMP • texdb\n" +
+                        "CINFO.BIN • stream.ini\n\n" +
+                        "O launcher vai copiar esses arquivos uma vez para a área privada do app."
+                )
+                .setNegativeButton("CANCELAR", (dialog, which) -> {
+                    playAfterDataImport = false;
+                })
+                .setPositiveButton("SELECIONAR PASTA", (dialog, which) -> {
+                    abrirSeletorDataInterna();
+                })
+                .show();
+    }
+
+    private boolean isInternalDataReady() {
+        File root = getFilesDir();
+
+        boolean ready =
+                new File(root, "texdb_app/texdb").isDirectory()
+                        && new File(root, "data_app/data").isDirectory()
+                        && new File(root, "audio_app/audio").isDirectory()
+                        && new File(root, "SAMP_app").isDirectory()
+                        && new File(root, "anim_app").isDirectory()
+                        && new File(root, "models").isDirectory()
+                        && isNonEmptyFile(new File(root, "CINFO_APP.BIN"))
+                        && isNonEmptyFile(new File(root, "stream_app.ini"));
+
+        if (ready) {
+            prefs.edit().putBoolean(PREF_INTERNAL_DATA_READY, true).apply();
+        }
+
+        return ready;
+    }
+
+    private boolean isNonEmptyFile(File file) {
+        return file.isFile() && file.length() > 0;
+    }
+
+    private void abrirSeletorDataInterna() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+        intent.addFlags(
+                Intent.FLAG_GRANT_READ_URI_PERMISSION
+                        | Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                        | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
+                        | Intent.FLAG_GRANT_PREFIX_URI_PERMISSION
+        );
+
+        startActivityForResult(intent, REQUEST_INTERNAL_DATA_FOLDER);
+    }
+
+    @Override
+    protected void onActivityResult(
+            int requestCode,
+            int resultCode,
+            Intent data
+    ) {
+        super.onActivityResult(requestCode, resultCode, data);
+
+        if (requestCode != REQUEST_INTERNAL_DATA_FOLDER) {
+            return;
+        }
+
+        if (resultCode != RESULT_OK
+                || data == null
+                || data.getData() == null) {
+            playAfterDataImport = false;
+            return;
+        }
+
+        Uri treeUri = data.getData();
+
+        try {
+            getContentResolver().takePersistableUriPermission(
+                    treeUri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+                            | Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            );
+        } catch (SecurityException ignored) {
+        }
+
+        importarBetaTesterDataParaInterno(treeUri);
+    }
+
+    private void importarBetaTesterDataParaInterno(Uri treeUri) {
+        dataImportDialog = new ProgressDialog(this);
+        dataImportDialog.setTitle("Preparando o jogo");
+        dataImportDialog.setMessage(
+                "Copiando a BetaTesterData para a área privada...\n" +
+                "Não feche o launcher."
+        );
+        dataImportDialog.setIndeterminate(true);
+        dataImportDialog.setCancelable(false);
+        dataImportDialog.show();
+
+        new Thread(() -> {
+            try {
+                File root = getFilesDir();
+
+                String rootDocumentId =
+                        DocumentsContract.getTreeDocumentId(treeUri);
+
+                Uri rootDocumentUri =
+                        DocumentsContract.buildDocumentUriUsingTree(
+                                treeUri,
+                                rootDocumentId
+                        );
+
+                DocumentEntry anim =
+                        findDocumentChild(treeUri, rootDocumentUri, "anim");
+                DocumentEntry audio =
+                        findDocumentChild(treeUri, rootDocumentUri, "audio");
+                DocumentEntry dataDir =
+                        findDocumentChild(treeUri, rootDocumentUri, "data");
+                DocumentEntry models =
+                        findDocumentChild(treeUri, rootDocumentUri, "models");
+                DocumentEntry samp =
+                        findDocumentChild(treeUri, rootDocumentUri, "SAMP");
+                DocumentEntry texdb =
+                        findDocumentChild(treeUri, rootDocumentUri, "texdb");
+                DocumentEntry cinfo =
+                        findDocumentChild(treeUri, rootDocumentUri, "CINFO.BIN");
+                DocumentEntry stream =
+                        findDocumentChild(treeUri, rootDocumentUri, "stream.ini");
+
+                requireDirectory(anim, "anim");
+                requireDirectory(audio, "audio");
+                requireDirectory(dataDir, "data");
+                requireDirectory(models, "models");
+                requireDirectory(samp, "SAMP");
+                requireDirectory(texdb, "texdb");
+                requireFile(cinfo, "CINFO.BIN");
+                requireFile(stream, "stream.ini");
+
+                // Preservamos a estrutura esperada pelo native.
+                File animDest = prepareCleanDirectory(root, "anim_app");
+
+                File audioBase = prepareCleanDirectory(root, "audio_app");
+                File audioDest = new File(audioBase, "audio");
+                ensureDirectory(audioDest);
+
+                File dataBase = prepareCleanDirectory(root, "data_app");
+                File dataDest = new File(dataBase, "data");
+                ensureDirectory(dataDest);
+
+                File sampDest = prepareCleanDirectory(root, "SAMP_app");
+
+                File texdbBase = prepareCleanDirectory(root, "texdb_app");
+                File texdbDest = new File(texdbBase, "texdb");
+                ensureDirectory(texdbDest);
+
+                File modelsDest = prepareCleanDirectory(root, "models");
+
+                copyDocumentDirectoryContents(treeUri, anim.uri, animDest);
+                copyDocumentDirectoryContents(treeUri, audio.uri, audioDest);
+                copyDocumentDirectoryContents(treeUri, dataDir.uri, dataDest);
+                copyDocumentDirectoryContents(treeUri, samp.uri, sampDest);
+                copyDocumentDirectoryContents(treeUri, texdb.uri, texdbDest);
+                copyDocumentDirectoryContents(treeUri, models.uri, modelsDest);
+
+                File cinfoDest = new File(root, "CINFO_APP.BIN");
+                copyDocumentFile(
+                        getContentResolver(),
+                        cinfo.uri,
+                        cinfoDest
+                );
+
+                File streamDest = new File(root, "stream_app.ini");
+                copyDocumentFile(
+                        getContentResolver(),
+                        stream.uri,
+                        streamDest
+                );
+
+                if (!isNonEmptyFile(cinfoDest)) {
+                    throw new IOException("CINFO.BIN não foi copiado corretamente.");
+                }
+
+                if (!isNonEmptyFile(streamDest)) {
+                    throw new IOException("stream.ini não foi copiado corretamente.");
+                }
+
+                // Confirma que as pastas principais existem antes de marcar pronto.
+                if (!new File(root, "texdb_app/texdb").isDirectory()
+                        || !new File(root, "data_app/data").isDirectory()
+                        || !new File(root, "audio_app/audio").isDirectory()
+                        || !new File(root, "SAMP_app").isDirectory()
+                        || !new File(root, "anim_app").isDirectory()
+                        || !new File(root, "models").isDirectory()) {
+                    throw new IOException("A estrutura interna ficou incompleta.");
+                }
+
+                prefs.edit()
+                        .putBoolean(PREF_INTERNAL_DATA_READY, true)
+                        .apply();
+
+                runOnUiThread(() -> {
+                    dismissDataImportDialog();
+
+                    Toast.makeText(
+                            this,
+                            "BetaTesterData instalada. Abrindo o jogo...",
+                            Toast.LENGTH_SHORT
+                    ).show();
+
+                    boolean shouldPlay = playAfterDataImport;
+                    playAfterDataImport = false;
+
+                    if (shouldPlay) {
+                        jogarServidorSelecionado();
+                    }
+                });
+
+            } catch (Exception e) {
+                prefs.edit()
+                        .putBoolean(PREF_INTERNAL_DATA_READY, false)
+                        .apply();
+
+                runOnUiThread(() -> {
+                    dismissDataImportDialog();
+                    playAfterDataImport = false;
+
+                    Toast.makeText(
+                            this,
+                            "Erro ao instalar a Data: " + e.getMessage(),
+                            Toast.LENGTH_LONG
+                    ).show();
+                });
+            }
+        }).start();
+    }
+
+    private void dismissDataImportDialog() {
+        if (dataImportDialog != null && dataImportDialog.isShowing()) {
+            dataImportDialog.dismiss();
+        }
+    }
+
+    private File prepareCleanDirectory(
+            File root,
+            String folderName
+    ) throws IOException {
+        File destination = new File(root, folderName);
+
+        if (destination.exists()
+                && !deleteRecursively(destination)) {
+            throw new IOException(
+                    "Não foi possível limpar: " + folderName
+            );
+        }
+
+        if (!destination.mkdirs()) {
+            throw new IOException(
+                    "Não foi possível criar: " + folderName
+            );
+        }
+
+        return destination;
+    }
+
+    private void ensureDirectory(File directory) throws IOException {
+        if (!directory.exists() && !directory.mkdirs()) {
+            throw new IOException(
+                    "Não foi possível criar: " + directory.getName()
+            );
+        }
+    }
+
+    private boolean deleteRecursively(File file) {
+        if (file == null || !file.exists()) {
+            return true;
+        }
+
+        if (file.isDirectory()) {
+            File[] children = file.listFiles();
+
+            if (children != null) {
+                for (File child : children) {
+                    if (!deleteRecursively(child)) {
+                        return false;
+                    }
+                }
+            }
+        }
+
+        return file.delete();
+    }
+
+    private DocumentEntry findDocumentChild(
+            Uri treeUri,
+            Uri parentDocumentUri,
+            String wantedName
+    ) throws IOException {
+        ContentResolver resolver = getContentResolver();
+
+        Uri childrenUri =
+                DocumentsContract.buildChildDocumentsUriUsingTree(
+                        treeUri,
+                        DocumentsContract.getDocumentId(parentDocumentUri)
+                );
+
+        String[] projection = new String[]{
+                DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                DocumentsContract.Document.COLUMN_MIME_TYPE
+        };
+
+        try (Cursor cursor = resolver.query(
+                childrenUri,
+                projection,
+                null,
+                null,
+                null
+        )) {
+            if (cursor == null) {
+                throw new IOException(
+                        "Não foi possível ler a pasta selecionada."
+                );
+            }
+
+            int idColumn = cursor.getColumnIndexOrThrow(
+                    DocumentsContract.Document.COLUMN_DOCUMENT_ID
+            );
+            int nameColumn = cursor.getColumnIndexOrThrow(
+                    DocumentsContract.Document.COLUMN_DISPLAY_NAME
+            );
+            int mimeColumn = cursor.getColumnIndexOrThrow(
+                    DocumentsContract.Document.COLUMN_MIME_TYPE
+            );
+
+            while (cursor.moveToNext()) {
+                String displayName = cursor.getString(nameColumn);
+
+                if (!wantedName.equalsIgnoreCase(displayName)) {
+                    continue;
+                }
+
+                String documentId = cursor.getString(idColumn);
+                String mimeType = cursor.getString(mimeColumn);
+
+                Uri childUri =
+                        DocumentsContract.buildDocumentUriUsingTree(
+                                treeUri,
+                                documentId
+                        );
+
+                boolean directory =
+                        DocumentsContract.Document.MIME_TYPE_DIR.equals(
+                                mimeType
+                        );
+
+                return new DocumentEntry(childUri, directory);
+            }
+        }
+
+        return null;
+    }
+
+    private void requireDirectory(
+            DocumentEntry entry,
+            String name
+    ) throws IOException {
+        if (entry == null || !entry.directory) {
+            throw new IOException(
+                    "Pasta obrigatória não encontrada: " + name
+            );
+        }
+    }
+
+    private void requireFile(
+            DocumentEntry entry,
+            String name
+    ) throws IOException {
+        if (entry == null || entry.directory) {
+            throw new IOException(
+                    "Arquivo obrigatório não encontrado: " + name
+            );
+        }
+    }
+
+    private void copyDocumentDirectoryContents(
+            Uri treeUri,
+            Uri sourceDirectoryUri,
+            File destinationDirectory
+    ) throws IOException {
+        ContentResolver resolver = getContentResolver();
+
+        Uri childrenUri =
+                DocumentsContract.buildChildDocumentsUriUsingTree(
+                        treeUri,
+                        DocumentsContract.getDocumentId(sourceDirectoryUri)
+                );
+
+        String[] projection = new String[]{
+                DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                DocumentsContract.Document.COLUMN_MIME_TYPE
+        };
+
+        try (Cursor cursor = resolver.query(
+                childrenUri,
+                projection,
+                null,
+                null,
+                null
+        )) {
+            if (cursor == null) {
+                throw new IOException(
+                        "Não foi possível listar uma pasta da Data."
+                );
+            }
+
+            int idColumn = cursor.getColumnIndexOrThrow(
+                    DocumentsContract.Document.COLUMN_DOCUMENT_ID
+            );
+            int nameColumn = cursor.getColumnIndexOrThrow(
+                    DocumentsContract.Document.COLUMN_DISPLAY_NAME
+            );
+            int mimeColumn = cursor.getColumnIndexOrThrow(
+                    DocumentsContract.Document.COLUMN_MIME_TYPE
+            );
+
+            while (cursor.moveToNext()) {
+                String documentId = cursor.getString(idColumn);
+                String displayName = cursor.getString(nameColumn);
+                String mimeType = cursor.getString(mimeColumn);
+
+                Uri childUri =
+                        DocumentsContract.buildDocumentUriUsingTree(
+                                treeUri,
+                                documentId
+                        );
+
+                File output =
+                        new File(destinationDirectory, displayName);
+
+                if (DocumentsContract.Document.MIME_TYPE_DIR.equals(mimeType)) {
+                    ensureDirectory(output);
+
+                    copyDocumentDirectoryContents(
+                            treeUri,
+                            childUri,
+                            output
+                    );
+                } else {
+                    copyDocumentFile(
+                            resolver,
+                            childUri,
+                            output
+                    );
+                }
+            }
+        }
+    }
+
+    private void copyDocumentFile(
+            ContentResolver resolver,
+            Uri sourceUri,
+            File destination
+    ) throws IOException {
+        File parent = destination.getParentFile();
+
+        if (parent != null
+                && !parent.exists()
+                && !parent.mkdirs()) {
+            throw new IOException(
+                    "Não foi possível criar: "
+                            + parent.getAbsolutePath()
+            );
+        }
+
+        try (InputStream input =
+                     resolver.openInputStream(sourceUri);
+             FileOutputStream output =
+                     new FileOutputStream(destination, false)) {
+
+            if (input == null) {
+                throw new IOException(
+                        "Não foi possível abrir um arquivo da Data."
+                );
+            }
+
+            byte[] buffer = new byte[1024 * 1024];
+            int read;
+
+            while ((read = input.read(buffer)) != -1) {
+                output.write(buffer, 0, read);
+            }
+
+            output.flush();
+        }
+    }
+
+    private static class DocumentEntry {
+        final Uri uri;
+        final boolean directory;
+
+        DocumentEntry(Uri uri, boolean directory) {
+            this.uri = uri;
+            this.directory = directory;
+        }
     }
 
     private void jogarServidorSelecionado() {
