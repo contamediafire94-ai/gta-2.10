@@ -7,10 +7,14 @@ import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.text.InputType;
 import android.view.Gravity;
 import android.view.View;
+import android.view.WindowInsets;
+import android.view.WindowInsetsController;
+import android.view.WindowManager;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
@@ -77,6 +81,7 @@ public class ServersActivity extends AppCompatActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        aplicarModoImersivo();
         setContentView(R.layout.activity_servers);
 
         prefs = getSharedPreferences("beta_tester_config", MODE_PRIVATE);
@@ -130,6 +135,55 @@ public class ServersActivity extends AppCompatActivity {
         prepararContadorLauncher();
         atualizarStatusLauncher();
         mostrarListaServidores();
+    }
+
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        aplicarModoImersivo();
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+
+        if (hasFocus) {
+            aplicarModoImersivo();
+        }
+    }
+
+    private void aplicarModoImersivo() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            getWindow().setDecorFitsSystemWindows(false);
+
+            WindowInsetsController controller = getWindow().getInsetsController();
+
+            if (controller != null) {
+                controller.hide(
+                        WindowInsets.Type.statusBars()
+                                | WindowInsets.Type.navigationBars()
+                );
+                controller.setSystemBarsBehavior(
+                        WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                );
+            }
+        } else {
+            getWindow().setFlags(
+                    WindowManager.LayoutParams.FLAG_FULLSCREEN,
+                    WindowManager.LayoutParams.FLAG_FULLSCREEN
+            );
+
+            View decor = getWindow().getDecorView();
+            decor.setSystemUiVisibility(
+                    View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                            | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                            | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                            | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                            | View.SYSTEM_UI_FLAG_FULLSCREEN
+                            | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+            );
+        }
     }
 
     private void mostrarListaServidores() {
@@ -393,8 +447,8 @@ public class ServersActivity extends AppCompatActivity {
         );
 
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                dp(40)
+                dp(220),
+                dp(38)
         );
         params.topMargin = dp(10);
         adicionar.setLayoutParams(params);
@@ -409,26 +463,20 @@ public class ServersActivity extends AppCompatActivity {
         conteudo.setOrientation(LinearLayout.VERTICAL);
         conteudo.setPadding(dp(24), dp(8), dp(24), 0);
 
-        EditText host = new EditText(this);
-        host.setHint("IP ou domínio");
-        host.setSingleLine(true);
-        host.setInputType(
+        EditText endereco = new EditText(this);
+        endereco.setHint("IP:Porta  •  ex: 144.217.62.159:7777");
+        endereco.setSingleLine(true);
+        endereco.setInputType(
                 InputType.TYPE_CLASS_TEXT
                         | InputType.TYPE_TEXT_VARIATION_URI
         );
 
-        EditText porta = new EditText(this);
-        porta.setHint("Porta (ex: 7777)");
-        porta.setSingleLine(true);
-        porta.setInputType(InputType.TYPE_CLASS_NUMBER);
-
-        conteudo.addView(host);
-        conteudo.addView(porta);
+        conteudo.addView(endereco);
 
         AlertDialog dialog = new AlertDialog.Builder(this)
                 .setTitle("Adicionar servidor")
                 .setMessage(
-                        "O nome será detectado automaticamente pelo servidor."
+                        "Digite o endereço completo. O nome será detectado automaticamente."
                 )
                 .setView(conteudo)
                 .setNegativeButton("CANCELAR", null)
@@ -438,36 +486,16 @@ public class ServersActivity extends AppCompatActivity {
         dialog.setOnShowListener(d -> dialog
                 .getButton(AlertDialog.BUTTON_POSITIVE)
                 .setOnClickListener(v -> {
-                    String hostServidor = host.getText().toString().trim();
-                    String portaTexto = porta.getText().toString().trim();
+                    String enderecoFinal = validarEnderecoServidor(
+                            endereco,
+                            endereco.getText().toString().trim()
+                    );
 
-                    if (hostServidor.isEmpty()) {
-                        host.setError("Digite o IP ou domínio");
+                    if (enderecoFinal == null) {
                         return;
                     }
 
-                    if (portaTexto.isEmpty()) {
-                        porta.setError("Digite a porta");
-                        return;
-                    }
-
-                    int portaServidor;
-
-                    try {
-                        portaServidor = Integer.parseInt(portaTexto);
-                    } catch (Exception e) {
-                        porta.setError("Porta inválida");
-                        return;
-                    }
-
-                    if (portaServidor < 1 || portaServidor > 65535) {
-                        porta.setError("Use uma porta entre 1 e 65535");
-                        return;
-                    }
-
-                    String endereco = hostServidor + ":" + portaServidor;
-
-                    if (servidorJaExiste(endereco)) {
+                    if (servidorJaExiste(enderecoFinal)) {
                         Toast.makeText(
                                 this,
                                 "Esse servidor já está na lista",
@@ -477,7 +505,7 @@ public class ServersActivity extends AppCompatActivity {
                     }
 
                     salvarServidorPersonalizado(
-                            new ServerItem("", endereco, true)
+                            new ServerItem("", enderecoFinal, true)
                     );
 
                     dialog.dismiss();
@@ -498,7 +526,7 @@ public class ServersActivity extends AppCompatActivity {
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.HORIZONTAL);
         card.setGravity(Gravity.CENTER_VERTICAL);
-        card.setPadding(dp(14), dp(7), dp(6), dp(7));
+        card.setPadding(dp(12), dp(7), dp(4), dp(7));
         card.setBackground(criarFundoArredondado("#171C24", 12));
         card.setClickable(true);
         card.setFocusable(true);
@@ -556,7 +584,7 @@ public class ServersActivity extends AppCompatActivity {
         status.setGravity(Gravity.CENTER);
 
         LinearLayout.LayoutParams statusParams = new LinearLayout.LayoutParams(
-                dp(108),
+                dp(92),
                 dp(38)
         );
         status.setLayoutParams(statusParams);
@@ -595,7 +623,7 @@ public class ServersActivity extends AppCompatActivity {
         menu.setMinHeight(0);
 
         LinearLayout.LayoutParams menuParams = new LinearLayout.LayoutParams(
-                dp(48),
+                dp(42),
                 dp(42)
         );
         menu.setLayoutParams(menuParams);
@@ -700,37 +728,20 @@ public class ServersActivity extends AppCompatActivity {
             ServerItem servidor,
             String nomeAtual
     ) {
-        String hostAtual = servidor.address;
-        String portaAtual = "";
-
-        int separador = servidor.address.lastIndexOf(':');
-
-        if (separador > 0 && separador < servidor.address.length() - 1) {
-            hostAtual = servidor.address.substring(0, separador);
-            portaAtual = servidor.address.substring(separador + 1);
-        }
-
         LinearLayout conteudo = new LinearLayout(this);
         conteudo.setOrientation(LinearLayout.VERTICAL);
         conteudo.setPadding(dp(24), dp(8), dp(24), 0);
 
-        EditText host = new EditText(this);
-        host.setHint("IP ou domínio");
-        host.setText(hostAtual);
-        host.setSingleLine(true);
-        host.setInputType(
+        EditText endereco = new EditText(this);
+        endereco.setHint("IP:Porta");
+        endereco.setText(servidor.address);
+        endereco.setSingleLine(true);
+        endereco.setInputType(
                 InputType.TYPE_CLASS_TEXT
                         | InputType.TYPE_TEXT_VARIATION_URI
         );
 
-        EditText porta = new EditText(this);
-        porta.setHint("Porta");
-        porta.setText(portaAtual);
-        porta.setSingleLine(true);
-        porta.setInputType(InputType.TYPE_CLASS_NUMBER);
-
-        conteudo.addView(host);
-        conteudo.addView(porta);
+        conteudo.addView(endereco);
 
         AlertDialog dialog = new AlertDialog.Builder(this)
                 .setTitle("Editar servidor")
@@ -743,34 +754,14 @@ public class ServersActivity extends AppCompatActivity {
         dialog.setOnShowListener(d -> dialog
                 .getButton(AlertDialog.BUTTON_POSITIVE)
                 .setOnClickListener(v -> {
-                    String novoHost = host.getText().toString().trim();
-                    String novaPortaTexto = porta.getText().toString().trim();
+                    String novoEndereco = validarEnderecoServidor(
+                            endereco,
+                            endereco.getText().toString().trim()
+                    );
 
-                    if (novoHost.isEmpty()) {
-                        host.setError("Digite o IP ou domínio");
+                    if (novoEndereco == null) {
                         return;
                     }
-
-                    if (novaPortaTexto.isEmpty()) {
-                        porta.setError("Digite a porta");
-                        return;
-                    }
-
-                    int novaPorta;
-
-                    try {
-                        novaPorta = Integer.parseInt(novaPortaTexto);
-                    } catch (Exception e) {
-                        porta.setError("Porta inválida");
-                        return;
-                    }
-
-                    if (novaPorta < 1 || novaPorta > 65535) {
-                        porta.setError("Use uma porta entre 1 e 65535");
-                        return;
-                    }
-
-                    String novoEndereco = novoHost + ":" + novaPorta;
 
                     if (servidorJaExisteExceto(
                             novoEndereco,
@@ -983,6 +974,55 @@ public class ServersActivity extends AppCompatActivity {
         }
 
         return false;
+    }
+
+
+    private String validarEnderecoServidor(
+            EditText campo,
+            String valor
+    ) {
+        String endereco = valor == null ? "" : valor.trim();
+
+        if (endereco.isEmpty()) {
+            campo.setError("Digite IP:Porta");
+            campo.requestFocus();
+            return null;
+        }
+
+        int separador = endereco.lastIndexOf(':');
+
+        if (separador <= 0 || separador >= endereco.length() - 1) {
+            campo.setError("Use o formato IP:Porta");
+            campo.requestFocus();
+            return null;
+        }
+
+        String host = endereco.substring(0, separador).trim();
+        String portaTexto = endereco.substring(separador + 1).trim();
+
+        if (host.isEmpty()) {
+            campo.setError("IP ou domínio inválido");
+            campo.requestFocus();
+            return null;
+        }
+
+        int porta;
+
+        try {
+            porta = Integer.parseInt(portaTexto);
+        } catch (Exception e) {
+            campo.setError("Porta inválida");
+            campo.requestFocus();
+            return null;
+        }
+
+        if (porta < 1 || porta > 65535) {
+            campo.setError("Use uma porta entre 1 e 65535");
+            campo.requestFocus();
+            return null;
+        }
+
+        return host + ":" + porta;
     }
 
     private void jogarServidorSelecionado() {
@@ -1445,8 +1485,8 @@ public class ServersActivity extends AppCompatActivity {
         card.setFocusable(true);
 
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
-                dp(300),
-                dp(84)
+                dp(270),
+                dp(82)
         );
         params.rightMargin = dp(10);
         card.setLayoutParams(params);
