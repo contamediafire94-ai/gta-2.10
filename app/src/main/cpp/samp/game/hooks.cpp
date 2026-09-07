@@ -3035,54 +3035,80 @@ stFile* NvFOpen(const char* r0, const char* r1, int r2, int r3)
 
     sprintf(path, "%s%s", g_pszStorage, r1);
 
-    // V43 - AMERICAN.GXT robust fallback.
+    // V44 - AMERICAN.GXT no armazenamento interno privado do app.
     //
-    // O arquivo AMERICAN_APP.GXT ja funcionou nesta base, mas em alguns boots
-    // o Android pode devolver EACCES para essa copia. Como CText::Load nao
-    // tolera bem um arquivo de idioma indisponivel, testamos caminhos conhecidos
-    // antes de entregar o FILE* ao GTA.
+    // O V43 confirmou EACCES em todos os caminhos dentro de Android/data.
+    // Primeiro tentamos a cópia preparada pelo Java em /data/user/0/.../files.
+    // Só depois mantemos os caminhos externos antigos como fallback diagnóstico.
     if (!strncmp(r1, "TEXT/AMERICAN.GXT", 17))
     {
-        const char* suffixes[] = {
-                "AMERICAN_APP.GXT",
-                "Text/american.gxt",
-                "TEXT/AMERICAN.GXT",
-                "SAMP_app/AMERICAN.GXT",
-                "SAMP_app/american.gxt"
+        const char* absoluteCandidates[] = {
+                "/data/user/0/com.samp.mobile/files/TEXT/AMERICAN.GXT",
+                "/data/data/com.samp.mobile/files/TEXT/AMERICAN.GXT"
         };
 
         bool foundReadableAmerican = false;
-        char candidate[255]{};
 
-        for (const char* suffix : suffixes)
+        for (const char* candidate : absoluteCandidates)
         {
-            memset(candidate, 0, sizeof(candidate));
-            snprintf(candidate, sizeof(candidate), "%s%s", g_pszStorage, suffix);
-
             errno = 0;
             FILE* check = fopen(candidate, "rb");
 
             if (check)
             {
                 fclose(check);
-
                 snprintf(path, sizeof(path), "%s", candidate);
-                FLog("V43 AMERICAN selected | %s", path);
 
+                FLog("V44 AMERICAN INTERNAL selected | %s", path);
                 foundReadableAmerican = true;
                 break;
             }
 
             const int checkErr = errno;
-            FLog("V43 AMERICAN candidate FAIL | path=%s | errno=%d | %s",
+            FLog("V44 AMERICAN INTERNAL FAIL | path=%s | errno=%d | %s",
                  candidate, checkErr, strerror(checkErr));
         }
 
         if (!foundReadableAmerican)
         {
-            // Mantem o caminho original pedido pelo GTA como ultimo fallback.
+            const char* suffixes[] = {
+                    "AMERICAN_APP.GXT",
+                    "Text/american.gxt",
+                    "TEXT/AMERICAN.GXT",
+                    "SAMP_app/AMERICAN.GXT",
+                    "SAMP_app/american.gxt"
+            };
+
+            char candidate[255]{};
+
+            for (const char* suffix : suffixes)
+            {
+                memset(candidate, 0, sizeof(candidate));
+                snprintf(candidate, sizeof(candidate), "%s%s", g_pszStorage, suffix);
+
+                errno = 0;
+                FILE* check = fopen(candidate, "rb");
+
+                if (check)
+                {
+                    fclose(check);
+                    snprintf(path, sizeof(path), "%s", candidate);
+
+                    FLog("V44 AMERICAN EXTERNAL fallback selected | %s", path);
+                    foundReadableAmerican = true;
+                    break;
+                }
+
+                const int checkErr = errno;
+                FLog("V44 AMERICAN EXTERNAL FAIL | path=%s | errno=%d | %s",
+                     candidate, checkErr, strerror(checkErr));
+            }
+        }
+
+        if (!foundReadableAmerican)
+        {
             snprintf(path, sizeof(path), "%s%s", g_pszStorage, r1);
-            FLog("V43 AMERICAN no readable fallback | original=%s", path);
+            FLog("V44 AMERICAN no readable source | original=%s", path);
         }
     }
 
