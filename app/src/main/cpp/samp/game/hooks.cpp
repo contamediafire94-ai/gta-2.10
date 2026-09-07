@@ -2485,17 +2485,17 @@ void CRenderer__RenderEverythingBarRoads_hook() {
 // V22 DIAGNOSTICO POS-BARROADS
 //
 // A V20 confirmou que RenderEverythingBarRoads() retorna normalmente.
-// O crash acontece logo depois. No RenderScene original, os próximos passos
+// O crash acontece logo depois. No RenderScene original, os prÃ³ximos passos
 // incluem BreakManager_c::Render(false), RenderFadingInUnderwaterEntities()
 // e RenderFadingInEntities().
 //
-// Como ainda não temos o símbolo/offset do BreakManager::Render confirmado
-// nesta build Android, não vamos inventar endereço. Em vez disso, marcamos
-// as duas funções CRenderer exportadas seguintes. Assim:
-// - se nenhum BEGIN aparecer após "V20 BARROADS END", o crash ocorreu antes
+// Como ainda nÃ£o temos o sÃ­mbolo/offset do BreakManager::Render confirmado
+// nesta build Android, nÃ£o vamos inventar endereÃ§o. Em vez disso, marcamos
+// as duas funÃ§Ãµes CRenderer exportadas seguintes. Assim:
+// - se nenhum BEGIN aparecer apÃ³s "V20 BARROADS END", o crash ocorreu antes
 //   delas (forte candidato: BreakManager_c::Render(false));
-// - se aparecer BEGIN sem END, achamos a função exata;
-// - se ambas retornarem, seguimos para o próximo estágio do RenderScene.
+// - se aparecer BEGIN sem END, achamos a funÃ§Ã£o exata;
+// - se ambas retornarem, seguimos para o prÃ³ximo estÃ¡gio do RenderScene.
 // =============================================================================
 
 void (*CRenderer__RenderFadingInUnderwaterEntities)();
@@ -3038,8 +3038,8 @@ stFile* NvFOpen(const char* r0, const char* r1, int r2, int r3)
     // V44 - AMERICAN.GXT no armazenamento interno privado do app.
     //
     // O V43 confirmou EACCES em todos os caminhos dentro de Android/data.
-    // Primeiro tentamos a cópia preparada pelo Java em /data/user/0/.../files.
-    // Só depois mantemos os caminhos externos antigos como fallback diagnóstico.
+    // Primeiro tentamos a cÃ³pia preparada pelo Java em /data/user/0/.../files.
+    // SÃ³ depois mantemos os caminhos externos antigos como fallback diagnÃ³stico.
     if (!strncmp(r1, "TEXT/AMERICAN.GXT", 17))
     {
         const char* absoluteCandidates[] = {
@@ -3254,7 +3254,7 @@ if(!strncmp(r1+12, "mainV1.scm", 10))
     }
 
     // SAMP IDE - o GTA pede "SAMP/samp.IDE", mas o arquivo do pacote
-    // está em SAMP_app/SAMP.ide. Redirecionamos explicitamente para
+    // estÃ¡ em SAMP_app/SAMP.ide. Redirecionamos explicitamente para
     // evitar o Permission denied da pasta SAMP antiga.
     if (!strcmp(r1, "SAMP/samp.IDE") ||
         !strcmp(r1, "SAMP/SAMP.IDE") ||
@@ -3548,27 +3548,27 @@ void (*RLEDecompress)(uint8_t* pDest, size_t uiDestSize, uint8_t const* pSrc, si
 void RLEDecompress_hook(uint8_t* pDest, size_t uiDestSize, const uint8_t* pSrc, size_t uiSegSize, uint32_t uiEscape) {
 
     if (!pDest || !pSrc || uiDestSize == 0 || uiSegSize == 0) {
-        // Обработка некорректных входных данных или размеров
-        // Здесь можно сгенерировать исключение или вернуть код ошибки
+        // ÐžÐ±Ñ€Ð°Ð±Ð¾Ñ‚ÐºÐ° Ð½ÐµÐºÐ¾Ñ€Ñ€ÐµÐºÑ‚Ð½Ñ‹Ñ… Ð²Ñ…Ð¾Ð´Ð½Ñ‹Ñ… Ð´Ð°Ð½Ð½Ñ‹Ñ… Ð¸Ð»Ð¸ Ñ€Ð°Ð·Ð¼ÐµÑ€Ð¾Ð²
+        // Ð—Ð´ÐµÑÑŒ Ð¼Ð¾Ð¶Ð½Ð¾ ÑÐ³ÐµÐ½ÐµÑ€Ð¸Ñ€Ð¾Ð²Ð°Ñ‚ÑŒ Ð¸ÑÐºÐ»ÑŽÑ‡ÐµÐ½Ð¸Ðµ Ð¸Ð»Ð¸ Ð²ÐµÑ€Ð½ÑƒÑ‚ÑŒ ÐºÐ¾Ð´ Ð¾ÑˆÐ¸Ð±ÐºÐ¸
         return;
     }
 
     const uint8_t* pTempSrc = pSrc;
     const uint8_t* const pEndOfDest = pDest + uiDestSize;
-    const uint8_t* const pEndOfSrc = pSrc + dwRLEDecompressSourceSize; // Предполагается, что dwRLEDecompressSourceSize определено правильно
+    const uint8_t* const pEndOfSrc = pSrc + dwRLEDecompressSourceSize; // ÐŸÑ€ÐµÐ´Ð¿Ð¾Ð»Ð°Ð³Ð°ÐµÑ‚ÑÑ, Ñ‡Ñ‚Ð¾ dwRLEDecompressSourceSize Ð¾Ð¿Ñ€ÐµÐ´ÐµÐ»ÐµÐ½Ð¾ Ð¿Ñ€Ð°Ð²Ð¸Ð»ÑŒÐ½Ð¾
 
     try {
         while (pDest < pEndOfDest && pTempSrc < pEndOfSrc) {
             if (*pTempSrc == uiEscape) {
                 if (pTempSrc + 1 >= pEndOfSrc || pTempSrc[1] == 0 || pTempSrc + 2 + uiSegSize > pEndOfSrc) {
-                    // Обработка ошибки, неверное значение ucCurSeg или недостаточно данных в исходном буфере
+                    // ÐžÐ±Ñ€Ð°Ð±Ð¾Ñ‚ÐºÐ° Ð¾ÑˆÐ¸Ð±ÐºÐ¸, Ð½ÐµÐ²ÐµÑ€Ð½Ð¾Ðµ Ð·Ð½Ð°Ñ‡ÐµÐ½Ð¸Ðµ ucCurSeg Ð¸Ð»Ð¸ Ð½ÐµÐ´Ð¾ÑÑ‚Ð°Ñ‚Ð¾Ñ‡Ð½Ð¾ Ð´Ð°Ð½Ð½Ñ‹Ñ… Ð² Ð¸ÑÑ…Ð¾Ð´Ð½Ð¾Ð¼ Ð±ÑƒÑ„ÐµÑ€Ðµ
                     throw std::runtime_error("rled error 1");
                 }
 
                 uint8_t ucCurSeg = pTempSrc[1];
                 while (ucCurSeg--) {
                     if (pDest + uiSegSize > pEndOfDest) {
-                        // Обработка ошибки, недостаточно места в целевом буфере
+                        // ÐžÐ±Ñ€Ð°Ð±Ð¾Ñ‚ÐºÐ° Ð¾ÑˆÐ¸Ð±ÐºÐ¸, Ð½ÐµÐ´Ð¾ÑÑ‚Ð°Ñ‚Ð¾Ñ‡Ð½Ð¾ Ð¼ÐµÑÑ‚Ð° Ð² Ñ†ÐµÐ»ÐµÐ²Ð¾Ð¼ Ð±ÑƒÑ„ÐµÑ€Ðµ
                         throw std::runtime_error("rled error 2");
                     }
                     memcpy(pDest, pTempSrc + 2, uiSegSize);
@@ -3577,7 +3577,7 @@ void RLEDecompress_hook(uint8_t* pDest, size_t uiDestSize, const uint8_t* pSrc, 
                 pTempSrc += 2 + uiSegSize;
             } else {
                 if (pDest + uiSegSize > pEndOfDest || pTempSrc + uiSegSize > pEndOfSrc) {
-                    // Обработка ошибки, недостаточно данных в исходном буфере или недостаточно места в целевом буфере
+                    // ÐžÐ±Ñ€Ð°Ð±Ð¾Ñ‚ÐºÐ° Ð¾ÑˆÐ¸Ð±ÐºÐ¸, Ð½ÐµÐ´Ð¾ÑÑ‚Ð°Ñ‚Ð¾Ñ‡Ð½Ð¾ Ð´Ð°Ð½Ð½Ñ‹Ñ… Ð² Ð¸ÑÑ…Ð¾Ð´Ð½Ð¾Ð¼ Ð±ÑƒÑ„ÐµÑ€Ðµ Ð¸Ð»Ð¸ Ð½ÐµÐ´Ð¾ÑÑ‚Ð°Ñ‚Ð¾Ñ‡Ð½Ð¾ Ð¼ÐµÑÑ‚Ð° Ð² Ñ†ÐµÐ»ÐµÐ²Ð¾Ð¼ Ð±ÑƒÑ„ÐµÑ€Ðµ
                     throw std::runtime_error("rled error 3");
                 }
                 memcpy(pDest, pTempSrc, uiSegSize);
