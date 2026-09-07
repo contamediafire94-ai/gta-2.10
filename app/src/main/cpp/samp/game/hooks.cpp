@@ -2485,17 +2485,17 @@ void CRenderer__RenderEverythingBarRoads_hook() {
 // V22 DIAGNOSTICO POS-BARROADS
 //
 // A V20 confirmou que RenderEverythingBarRoads() retorna normalmente.
-// O crash acontece logo depois. No RenderScene original, os prÃ³ximos passos
+// O crash acontece logo depois. No RenderScene original, os próximos passos
 // incluem BreakManager_c::Render(false), RenderFadingInUnderwaterEntities()
 // e RenderFadingInEntities().
 //
-// Como ainda nÃ£o temos o sÃ­mbolo/offset do BreakManager::Render confirmado
-// nesta build Android, nÃ£o vamos inventar endereÃ§o. Em vez disso, marcamos
-// as duas funÃ§Ãµes CRenderer exportadas seguintes. Assim:
-// - se nenhum BEGIN aparecer apÃ³s "V20 BARROADS END", o crash ocorreu antes
+// Como ainda não temos o símbolo/offset do BreakManager::Render confirmado
+// nesta build Android, não vamos inventar endereço. Em vez disso, marcamos
+// as duas funções CRenderer exportadas seguintes. Assim:
+// - se nenhum BEGIN aparecer após "V20 BARROADS END", o crash ocorreu antes
 //   delas (forte candidato: BreakManager_c::Render(false));
-// - se aparecer BEGIN sem END, achamos a funÃ§Ã£o exata;
-// - se ambas retornarem, seguimos para o prÃ³ximo estÃ¡gio do RenderScene.
+// - se aparecer BEGIN sem END, achamos a função exata;
+// - se ambas retornarem, seguimos para o próximo estágio do RenderScene.
 // =============================================================================
 
 void (*CRenderer__RenderFadingInUnderwaterEntities)();
@@ -3025,6 +3025,7 @@ struct stFile
 };
 
 char lastFile[123];
+static const char* WIU_INTERNAL_ROOT = "/data/user/0/com.samp.mobile/files/";
 
 stFile* NvFOpen(const char* r0, const char* r1, int r2, int r3)
 {
@@ -3035,11 +3036,27 @@ stFile* NvFOpen(const char* r0, const char* r1, int r2, int r3)
 
     sprintf(path, "%s%s", g_pszStorage, r1);
 
+    // V45: para arquivos espelhados pela BetaTesterData, preferimos primeiro
+    // a área PRIVADA real do app. Arquivos que não existem lá continuam no
+    // caminho externo antigo.
+    {
+        char internalMirror[255]{};
+        snprintf(internalMirror, sizeof(internalMirror), "%s%s", WIU_INTERNAL_ROOT, r1);
+
+        FILE* mirrorCheck = fopen(internalMirror, "rb");
+        if (mirrorCheck)
+        {
+            fclose(mirrorCheck);
+            snprintf(path, sizeof(path), "%s", internalMirror);
+            FLog("V45 INTERNAL MIRROR | %s", path);
+        }
+    }
+
     // V44 - AMERICAN.GXT no armazenamento interno privado do app.
     //
     // O V43 confirmou EACCES em todos os caminhos dentro de Android/data.
-    // Primeiro tentamos a cÃ³pia preparada pelo Java em /data/user/0/.../files.
-    // SÃ³ depois mantemos os caminhos externos antigos como fallback diagnÃ³stico.
+    // Primeiro tentamos a cópia preparada pelo Java em /data/user/0/.../files.
+    // Só depois mantemos os caminhos externos antigos como fallback diagnóstico.
     if (!strncmp(r1, "TEXT/AMERICAN.GXT", 17))
     {
         const char* absoluteCandidates[] = {
@@ -3117,8 +3134,8 @@ stFile* NvFOpen(const char* r0, const char* r1, int r2, int r3)
     // Ex.: texdb/menu/menu.txt -> texdb_app/texdb/menu/menu.txt
     if (!strncmp(r1, "texdb/", 6))
     {
-        sprintf(path, "%stexdb_app/texdb/%s", g_pszStorage, r1 + 6);
-        FLog("Redirecting TEXDB -> %s", path);
+        snprintf(path, sizeof(path), "%stexdb_app/texdb/%s", WIU_INTERNAL_ROOT, r1 + 6);
+        FLog("V45 Redirecting TEXDB INTERNAL -> %s", path);
     }
 
     // Todo acesso a data/ ou DATA/ vai para a copia criada pelo proprio app.
@@ -3127,7 +3144,7 @@ stFile* NvFOpen(const char* r0, const char* r1, int r2, int r3)
     if (!strncmp(r1, "data/", 5) || !strncmp(r1, "DATA/", 5))
     {
         char dataPath[255]{};
-        sprintf(dataPath, "%sdata_app/data/%s", g_pszStorage, r1 + 5);
+        snprintf(dataPath, sizeof(dataPath), "%sdata_app/data/%s", WIU_INTERNAL_ROOT, r1 + 5);
 
         FILE *dataCheck = fopen(dataPath, "rb");
         if (dataCheck)
@@ -3137,10 +3154,10 @@ stFile* NvFOpen(const char* r0, const char* r1, int r2, int r3)
         }
         else
         {
-            sprintf(path, "%sdata_app/%s", g_pszStorage, r1 + 5);
+            snprintf(path, sizeof(path), "%sdata_app/%s", WIU_INTERNAL_ROOT, r1 + 5);
         }
 
-        FLog("Redirecting DATA -> %s", path);
+        FLog("V45 Redirecting DATA INTERNAL -> %s", path);
     }
 
 
@@ -3149,7 +3166,7 @@ stFile* NvFOpen(const char* r0, const char* r1, int r2, int r3)
     if (!strncmp(r1, "AUDIO/", 6) || !strncmp(r1, "audio/", 6))
     {
         char audioPath[255]{};
-        sprintf(audioPath, "%saudio_app/audio/%s", g_pszStorage, r1 + 6);
+        snprintf(audioPath, sizeof(audioPath), "%saudio_app/audio/%s", WIU_INTERNAL_ROOT, r1 + 6);
 
         FILE *audioCheck = fopen(audioPath, "rb");
         if (audioCheck)
@@ -3159,10 +3176,10 @@ stFile* NvFOpen(const char* r0, const char* r1, int r2, int r3)
         }
         else
         {
-            sprintf(path, "%saudio_app/%s", g_pszStorage, r1 + 6);
+            snprintf(path, sizeof(path), "%saudio_app/%s", WIU_INTERNAL_ROOT, r1 + 6);
         }
 
-        FLog("Redirecting AUDIO -> %s", path);
+        FLog("V45 Redirecting AUDIO INTERNAL -> %s", path);
     }
 
     // ----------------------------
@@ -3170,7 +3187,7 @@ stFile* NvFOpen(const char* r0, const char* r1, int r2, int r3)
     // stream.ini copiado pelo proprio app para evitar EACCES/Permission denied
     if (!strcmp(r1, "stream.ini") || !strcmp(r1, "STREAM.INI"))
     {
-        sprintf(path, "%sstream_app.ini", g_pszStorage);
+        snprintf(path, sizeof(path), "%sstream_app.ini", WIU_INTERNAL_ROOT);
         FLog("Redirecting STREAM.INI -> %s", path);
     }
 
@@ -3179,37 +3196,37 @@ if(!strncmp(r1+12, "mainV1.scm", 10))
         // TEMP TEST:
         // Let this GTA 2.10 base load its matching mainV1.scm instead of
         // replacing it with the much smaller SA-MP main.scm.
-        sprintf(path, "%sSAMP_app/mainV1.scm", g_pszStorage);
+        snprintf(path, sizeof(path), "%sSAMP_app/mainV1.scm", WIU_INTERNAL_ROOT);
         FLog("TEST: loading original mainV1.scm -> %s", path);
     }
     // ----------------------------
     if(!strncmp(r1+12, "SCRIPTV1.IMG", 12))
     {
-        sprintf(path, "%sSAMP_app/script.img", g_pszStorage);
+        snprintf(path, sizeof(path), "%sSAMP_app/script.img", WIU_INTERNAL_ROOT);
         FLog("Loading script.img..");
     }
     // ----------------------------
     if(!strncmp(r1, "DATA/PEDS.IDE", 13))
     {
-        sprintf(path, "%sSAMP_app/peds.ide", g_pszStorage);
+        snprintf(path, sizeof(path), "%sSAMP_app/peds.ide", WIU_INTERNAL_ROOT);
         FLog("Loading peds.ide..");
     }
     // ----------------------------
     if(!strncmp(r1, "DATA/VEHICLES.IDE", 17))
     {
-        sprintf(path, "%sSAMP_app/vehicles.ide", g_pszStorage);
+        snprintf(path, sizeof(path), "%sSAMP_app/vehicles.ide", WIU_INTERNAL_ROOT);
         FLog("Loading vehicles.ide..");
     }
 
     if (!strncmp(r1, "DATA/GTA.DAT", 12))
     {
-        sprintf(path, "%sSAMP_app/gta.dat", g_pszStorage);
+        snprintf(path, sizeof(path), "%sSAMP_app/gta.dat", WIU_INTERNAL_ROOT);
         FLog("Loading gta.dat..");
     }
 
     if (!strncmp(r1, "DATA/WEAPON.DAT", 15))
     {
-        sprintf(path, "%sSAMP_app/weapon.dat", g_pszStorage);
+        snprintf(path, sizeof(path), "%sSAMP_app/weapon.dat", WIU_INTERNAL_ROOT);
         FLog("Loading weapon.dat..");
     }
 
@@ -3217,7 +3234,7 @@ if(!strncmp(r1+12, "mainV1.scm", 10))
     // Ex.: ANIM/PED.IFP -> anim_app/PED.IFP
     if (!strncmp(r1, "ANIM/", 5) || !strncmp(r1, "anim/", 5))
     {
-        sprintf(path, "%sanim_app/%s", g_pszStorage, r1 + 5);
+        snprintf(path, sizeof(path), "%sanim_app/%s", WIU_INTERNAL_ROOT, r1 + 5);
         FLog("Redirecting ANIM -> %s", path);
     }
 
@@ -3233,7 +3250,7 @@ if(!strncmp(r1+12, "mainV1.scm", 10))
 #endif
         st->isFileExist = false;
 
-        sprintf(path, "%sCINFO_APP.BIN", g_pszStorage);
+        snprintf(path, sizeof(path), "%sCINFO_APP.BIN", WIU_INTERNAL_ROOT);
 
         errno = 0;
         FILE *f = fopen(path, "r+b");
@@ -3254,14 +3271,14 @@ if(!strncmp(r1+12, "mainV1.scm", 10))
     }
 
     // SAMP IDE - o GTA pede "SAMP/samp.IDE", mas o arquivo do pacote
-    // estÃ¡ em SAMP_app/SAMP.ide. Redirecionamos explicitamente para
+    // está em SAMP_app/SAMP.ide. Redirecionamos explicitamente para
     // evitar o Permission denied da pasta SAMP antiga.
     if (!strcmp(r1, "SAMP/samp.IDE") ||
         !strcmp(r1, "SAMP/SAMP.IDE") ||
         !strcmp(r1, "SAMP/samp.ide") ||
         !strcmp(r1, "SAMP/SAMP.ide"))
     {
-        sprintf(path, "%sSAMP_app/SAMP.ide", g_pszStorage);
+        snprintf(path, sizeof(path), "%sSAMP_app/SAMP.ide", WIU_INTERNAL_ROOT);
         FLog("Redirecting SAMP.IDE -> %s", path);
     }
 
@@ -3548,27 +3565,27 @@ void (*RLEDecompress)(uint8_t* pDest, size_t uiDestSize, uint8_t const* pSrc, si
 void RLEDecompress_hook(uint8_t* pDest, size_t uiDestSize, const uint8_t* pSrc, size_t uiSegSize, uint32_t uiEscape) {
 
     if (!pDest || !pSrc || uiDestSize == 0 || uiSegSize == 0) {
-        // ÐžÐ±Ñ€Ð°Ð±Ð¾Ñ‚ÐºÐ° Ð½ÐµÐºÐ¾Ñ€Ñ€ÐµÐºÑ‚Ð½Ñ‹Ñ… Ð²Ñ…Ð¾Ð´Ð½Ñ‹Ñ… Ð´Ð°Ð½Ð½Ñ‹Ñ… Ð¸Ð»Ð¸ Ñ€Ð°Ð·Ð¼ÐµÑ€Ð¾Ð²
-        // Ð—Ð´ÐµÑÑŒ Ð¼Ð¾Ð¶Ð½Ð¾ ÑÐ³ÐµÐ½ÐµÑ€Ð¸Ñ€Ð¾Ð²Ð°Ñ‚ÑŒ Ð¸ÑÐºÐ»ÑŽÑ‡ÐµÐ½Ð¸Ðµ Ð¸Ð»Ð¸ Ð²ÐµÑ€Ð½ÑƒÑ‚ÑŒ ÐºÐ¾Ð´ Ð¾ÑˆÐ¸Ð±ÐºÐ¸
+        // Обработка некорректных входных данных или размеров
+        // Здесь можно сгенерировать исключение или вернуть код ошибки
         return;
     }
 
     const uint8_t* pTempSrc = pSrc;
     const uint8_t* const pEndOfDest = pDest + uiDestSize;
-    const uint8_t* const pEndOfSrc = pSrc + dwRLEDecompressSourceSize; // ÐŸÑ€ÐµÐ´Ð¿Ð¾Ð»Ð°Ð³Ð°ÐµÑ‚ÑÑ, Ñ‡Ñ‚Ð¾ dwRLEDecompressSourceSize Ð¾Ð¿Ñ€ÐµÐ´ÐµÐ»ÐµÐ½Ð¾ Ð¿Ñ€Ð°Ð²Ð¸Ð»ÑŒÐ½Ð¾
+    const uint8_t* const pEndOfSrc = pSrc + dwRLEDecompressSourceSize; // Предполагается, что dwRLEDecompressSourceSize определено правильно
 
     try {
         while (pDest < pEndOfDest && pTempSrc < pEndOfSrc) {
             if (*pTempSrc == uiEscape) {
                 if (pTempSrc + 1 >= pEndOfSrc || pTempSrc[1] == 0 || pTempSrc + 2 + uiSegSize > pEndOfSrc) {
-                    // ÐžÐ±Ñ€Ð°Ð±Ð¾Ñ‚ÐºÐ° Ð¾ÑˆÐ¸Ð±ÐºÐ¸, Ð½ÐµÐ²ÐµÑ€Ð½Ð¾Ðµ Ð·Ð½Ð°Ñ‡ÐµÐ½Ð¸Ðµ ucCurSeg Ð¸Ð»Ð¸ Ð½ÐµÐ´Ð¾ÑÑ‚Ð°Ñ‚Ð¾Ñ‡Ð½Ð¾ Ð´Ð°Ð½Ð½Ñ‹Ñ… Ð² Ð¸ÑÑ…Ð¾Ð´Ð½Ð¾Ð¼ Ð±ÑƒÑ„ÐµÑ€Ðµ
+                    // Обработка ошибки, неверное значение ucCurSeg или недостаточно данных в исходном буфере
                     throw std::runtime_error("rled error 1");
                 }
 
                 uint8_t ucCurSeg = pTempSrc[1];
                 while (ucCurSeg--) {
                     if (pDest + uiSegSize > pEndOfDest) {
-                        // ÐžÐ±Ñ€Ð°Ð±Ð¾Ñ‚ÐºÐ° Ð¾ÑˆÐ¸Ð±ÐºÐ¸, Ð½ÐµÐ´Ð¾ÑÑ‚Ð°Ñ‚Ð¾Ñ‡Ð½Ð¾ Ð¼ÐµÑÑ‚Ð° Ð² Ñ†ÐµÐ»ÐµÐ²Ð¾Ð¼ Ð±ÑƒÑ„ÐµÑ€Ðµ
+                        // Обработка ошибки, недостаточно места в целевом буфере
                         throw std::runtime_error("rled error 2");
                     }
                     memcpy(pDest, pTempSrc + 2, uiSegSize);
@@ -3577,7 +3594,7 @@ void RLEDecompress_hook(uint8_t* pDest, size_t uiDestSize, const uint8_t* pSrc, 
                 pTempSrc += 2 + uiSegSize;
             } else {
                 if (pDest + uiSegSize > pEndOfDest || pTempSrc + uiSegSize > pEndOfSrc) {
-                    // ÐžÐ±Ñ€Ð°Ð±Ð¾Ñ‚ÐºÐ° Ð¾ÑˆÐ¸Ð±ÐºÐ¸, Ð½ÐµÐ´Ð¾ÑÑ‚Ð°Ñ‚Ð¾Ñ‡Ð½Ð¾ Ð´Ð°Ð½Ð½Ñ‹Ñ… Ð² Ð¸ÑÑ…Ð¾Ð´Ð½Ð¾Ð¼ Ð±ÑƒÑ„ÐµÑ€Ðµ Ð¸Ð»Ð¸ Ð½ÐµÐ´Ð¾ÑÑ‚Ð°Ñ‚Ð¾Ñ‡Ð½Ð¾ Ð¼ÐµÑÑ‚Ð° Ð² Ñ†ÐµÐ»ÐµÐ²Ð¾Ð¼ Ð±ÑƒÑ„ÐµÑ€Ðµ
+                    // Обработка ошибки, недостаточно данных в исходном буфере или недостаточно места в целевом буфере
                     throw std::runtime_error("rled error 3");
                 }
                 memcpy(pDest, pTempSrc, uiSegSize);
