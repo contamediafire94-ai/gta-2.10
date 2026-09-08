@@ -588,20 +588,27 @@ void Render2dStuff_V26_hook()
     const unsigned int current = ++seq;
     g_v29Render2dCount.fetch_add(1, std::memory_order_relaxed);
 
+    pthread_mutex_lock(&g_v38TwoDPresentMutex);
+    g_v37TwoDInProgress.store(true, std::memory_order_release);
+
     if (current <= 16)
     {
         EGLContext ctx = eglGetCurrentContext();
         EGLSurface draw = eglGetCurrentSurface(EGL_DRAW);
-        FLog("V33 RENDER2D BEGIN | seq=%u tid=%d ctx=%p draw=%p",
+        FLog("V58 ORIGINAL2D BEGIN | seq=%u tid=%d ctx=%p draw=%p",
              current, V29GetTid(), (void*)ctx, (void*)draw);
     }
 
-    // Keep the original GTA 2D path intact first. This was the stable V31 path.
+    // Deixa o proprio GTASA montar HUD/radar/mensagens usando a ordem e os
+    // render-targets nativos desta build.
     Render2dStuff_V26_Original();
 
-    // V33: restore only the SA-MP 2D layers that were intentionally omitted
-    // during the framebuffer investigation. The original source already had
-    // this exact post-Render2dStuff pattern commented out.
+    if (current <= 16)
+        FLog("V58 ORIGINAL2D END | seq=%u", current);
+
+    // O GTA original nao conhece as camadas SA-MP. Recolocamos somente elas
+    // DEPOIS do 2D original, sem chamar funcoes privadas do RenderQueue na
+    // thread EGL.
     if (pNetGame)
     {
         CTextDrawPool* pTextDrawPool = pNetGame->GetTextDrawPool();
@@ -609,7 +616,8 @@ void Render2dStuff_V26_hook()
         {
             pTextDrawPool->Draw();
             if (current <= 16)
-                FLog("V33 TEXTDRAW DRAW | seq=%u pool=%p", current, pTextDrawPool);
+                FLog("V58 TEXTDRAW DRAW | seq=%u pool=%p",
+                     current, pTextDrawPool);
         }
     }
 
@@ -617,12 +625,18 @@ void Render2dStuff_V26_hook()
     {
         pUI->render();
         if (current <= 16)
-            FLog("V33 UI RENDER | seq=%u ui=%p", current, pUI);
+            FLog("V58 UI RENDER | seq=%u ui=%p", current, pUI);
     }
 
+    g_v37TwoDCompleted.store(current, std::memory_order_release);
+    g_v37TwoDInProgress.store(false, std::memory_order_release);
+
+    pthread_mutex_unlock(&g_v38TwoDPresentMutex);
+
     if (current <= 16)
-        FLog("V33 RENDER2D END | seq=%u", current);
+        FLog("V58 ORIGINAL2D COMPLETE | seq=%u", current);
 }
+
 
 // -----------------------------------------------------------------------------
 // V29: interceptores GL leves. Nao alteram estado; apenas contam/observam.
@@ -1423,42 +1437,11 @@ static EGLBoolean eglSwapBuffers_V29_hook(EGLDisplay dpy, EGLSurface surface)
             V30ProbeCurrentRenderTarget(
                     current, swapTid, fbo, viewport, width, height);
 
-            // V57: o log da V56 mostrou que Render2dStuff roda sem contexto
-            // EGL (ctx=0/draw=0). Portanto o emu_FlushAltRenderTarget feito
-            // no produtor pode apenas enfileirar trabalho. Repetimos o teste
-            // e o flush AQUI, na thread que possui o contexto/surface real,
-            // antes de esperar a GPU e copiar o FBO para a tela.
-            if (v38Completed > 0)
-            {
-                const uintptr_t v57AltTestTarget =
-                        g_libGTASA + (VER_x32 ? 0x001BB7F4 + 1 : 0x24EA90);
-                const uintptr_t v57AltFlushTarget =
-                        g_libGTASA + (VER_x32 ? 0x001BC20C + 1 : 0x24F5B8);
-
-                const bool v57AltActive =
-                        CHook::CallFunction<bool>(v57AltTestTarget);
-
-                if (v38Completed <= 8 || (v38Completed % 120) == 0)
-                {
-                    FLog("V57 EGL ALTTEST | swap=%u tid=%d completed=%u altRT=%d ctx=%p draw=%p",
-                         current, swapTid, v38Completed,
-                         v57AltActive ? 1 : 0,
-                         (void*)eglGetCurrentContext(),
-                         (void*)eglGetCurrentSurface(EGL_DRAW));
-                }
-
-                if (v57AltActive)
-                {
-                    CHook::CallFunction<void>(v57AltFlushTarget);
-
-                    if (v38Completed <= 8 || (v38Completed % 120) == 0)
-                    {
-                        FLog("V57 EGL ALTFLUSH | swap=%u tid=%d completed=%u",
-                             current, swapTid, v38Completed);
-                    }
-                }
-            }
-
+            // V58: NUNCA chamar emu_IsAltRenderTarget/emu_FlushAltRenderTarget
+            // dentro da thread EGL. A V57 mostrou dois sintomas de corrupcao:
+            // hang logo no ALTTEST em uma execucao e SIGSEGV posterior em
+            // RQ_Command_rqVertexBufferDelete em outra. Aqui fazemos apenas
+            // sincronizacao GL segura + blit.
             // The producer is excluded for the entire finish+copy window.
             glFinish();
             const GLenum v38FinishErr = glGetError();
@@ -4344,10 +4327,14 @@ void InstallHooks()
 {
     CHook::InlineHook("_ZN7CCamera4FadeEfs", &CCamera__Fade_V12_hook, &CCamera__Fade_V12_Original);
     CHook::InlineHook("_ZN14CRunningScript7ProcessEv", &CRunningScript__Process_hook, &CRunningScript__Process);
-    // V35: restore the source's complete SA-MP/GTA 2D pipeline.
-    // V26 temporarily replaced this with GTA's original Render2dStuff only
-    // while the black-screen/FBO problem was being isolated.
-    CHook::Redirect("_Z13Render2dStuffv", &Render2dStuff);
+    // V58: voltar ao Render2dStuff ORIGINAL do GTA e adicionar somente
+    // as camadas SA-MP depois dele. O custom Render2dStuff estava rodando em
+    // thread sem EGL context; a V57 provou que mover funcoes privadas do
+    // RenderQueue para a thread EGL corrompe a fila. O original preserva a
+    // ordem/render-target que a propria versao do GTASA espera.
+    CHook::InlineHook("_Z13Render2dStuffv",
+                      &Render2dStuff_V26_hook,
+                      &Render2dStuff_V26_Original);
     CHook::InlineHook("_Z13RenderEffectsv",
                       &RenderEffects_V30_hook,
                       &RenderEffects_V30_Original);
@@ -4402,7 +4389,7 @@ void InstallHooks()
         }
     }
 
-    FLog("V57 INSTALL: EGL_ALTFLUSH + V40_BASE + ORIGINAL_ES2_CPU_STATE + ORIGINAL_CRQ_SELECTOR + V31_FALLBACK");
+    FLog("V58 INSTALL: GTA_ORIGINAL_2D + SAMP_POSTLAYERS + SAFE_EGL_BLIT + V40_BASE");
 
     g_v29EglSwapStub = shadowhook_hook_sym_name(
             "libEGL.so",
