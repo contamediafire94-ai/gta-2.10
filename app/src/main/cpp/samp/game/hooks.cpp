@@ -3743,20 +3743,27 @@ bool RwResourcesFreeResEntry_hook(void* entry)
     return result;
 }
 
-// V52 - CINFO runtime write redirect.
+// V53 - CINFO runtime write through stdio.
 //
-// V50 intentionally treats the imported CINFO.BIN as missing so GTA rebuilds
-// the collision cache from the current DATA/IDE/COL set. After the whole map
-// is parsed, CColAccel::endCache calls CFileMgr::OpenFileForWriting on
-// MODELS\\CINFO.BIN. On Android 10+ the legacy external Android/data path is
-// not writable from this native path, which produced a null/invalid handle and
-// a SIGSEGV inside OS_FileWrite.
+// V52 proved that the CINFO write request is intercepted, but passing an
+// absolute /data/user/0/... path back into Rockstar's CFileMgr returns handle
+// 0. CColAccel::endCache does not validate that handle before calling Write,
+// so OS_FileWrite dereferences an invalid file and crashes at address 0x8.
 //
-// Redirect only the WRITE side of CINFO to the app-private storage. Reading is
-// still bypassed by V50 in NvFOpen, so a stale cache is never consumed.
-uintptr_t (*CFileMgr_OpenFileForWriting_V52_Original)(const char* fileName);
+// For the CINFO rebuild only, bypass Rockstar's writer completely:
+//   OpenFileForWriting -> fopen() in app-private storage
+//   CFileMgr::Write    -> fwrite() for a private sentinel handle
+//   CFileMgr::CloseFile-> fclose() for that same sentinel
+// All other files keep using the original CFileMgr functions.
+uintptr_t (*CFileMgr_OpenFileForWriting_V53_Original)(const char* fileName);
+int (*CFileMgr_Write_V53_Original)(uintptr_t file, char* buffer, int size);
+int (*CFileMgr_CloseFile_V53_Original)(uintptr_t file);
 
-uintptr_t CFileMgr_OpenFileForWriting_V52_hook(const char* fileName)
+static FILE* g_V53CinfoRuntimeFile = nullptr;
+static const uintptr_t V53_CINFO_HANDLE = (uintptr_t)0x53C1F0u;
+static unsigned long long g_V53CinfoBytesWritten = 0;
+
+uintptr_t CFileMgr_OpenFileForWriting_V53_hook(const char* fileName)
 {
     if (fileName)
     {
@@ -3771,20 +3778,91 @@ uintptr_t CFileMgr_OpenFileForWriting_V52_hook(const char* fileName)
             snprintf(privatePath, sizeof(privatePath),
                      "%sCINFO_RUNTIME.BIN", WIU_INTERNAL_ROOT);
 
-            FLog("V52 CINFO WRITE redirect | request=%s | path=%s",
-                 fileName, privatePath);
+            if (g_V53CinfoRuntimeFile)
+            {
+                fclose(g_V53CinfoRuntimeFile);
+                g_V53CinfoRuntimeFile = nullptr;
+            }
 
-            uintptr_t handle =
-                    CFileMgr_OpenFileForWriting_V52_Original(privatePath);
+            errno = 0;
+            g_V53CinfoRuntimeFile = fopen(privatePath, "wb");
+            const int openErr = errno;
+            g_V53CinfoBytesWritten = 0;
 
-            FLog("V52 CINFO WRITE handle | 0x%llx",
-                 (unsigned long long)handle);
+            if (!g_V53CinfoRuntimeFile)
+            {
+                FLog("V53 CINFO fopen FAIL | request=%s | path=%s | errno=%d | %s",
+                     fileName, privatePath, openErr, strerror(openErr));
+                return 0;
+            }
 
-            return handle;
+            FLog("V53 CINFO fopen OK | request=%s | path=%s | sentinel=0x%llx",
+                 fileName, privatePath,
+                 (unsigned long long)V53_CINFO_HANDLE);
+
+            return V53_CINFO_HANDLE;
         }
     }
 
-    return CFileMgr_OpenFileForWriting_V52_Original(fileName);
+    return CFileMgr_OpenFileForWriting_V53_Original(fileName);
+}
+
+int CFileMgr_Write_V53_hook(uintptr_t file, char* buffer, int size)
+{
+    if (file == V53_CINFO_HANDLE)
+    {
+        if (!g_V53CinfoRuntimeFile || !buffer || size < 0)
+        {
+            FLog("V53 CINFO fwrite INVALID | fp=%p | buffer=%p | size=%d",
+                 g_V53CinfoRuntimeFile, buffer, size);
+            return 0;
+        }
+
+        errno = 0;
+        const size_t written = fwrite(buffer, 1, (size_t)size, g_V53CinfoRuntimeFile);
+        const int writeErr = errno;
+        g_V53CinfoBytesWritten += (unsigned long long)written;
+
+        if (written != (size_t)size)
+        {
+            FLog("V53 CINFO fwrite SHORT | wanted=%d | wrote=%llu | errno=%d | %s",
+                 size, (unsigned long long)written, writeErr, strerror(writeErr));
+        }
+        else
+        {
+            FLog("V53 CINFO fwrite OK | chunk=%d | total=%llu",
+                 size, g_V53CinfoBytesWritten);
+        }
+
+        return (int)written;
+    }
+
+    return CFileMgr_Write_V53_Original(file, buffer, size);
+}
+
+int CFileMgr_CloseFile_V53_hook(uintptr_t file)
+{
+    if (file == V53_CINFO_HANDLE)
+    {
+        if (!g_V53CinfoRuntimeFile)
+        {
+            FLog("V53 CINFO fclose skipped | runtime file already null");
+            return 0;
+        }
+
+        fflush(g_V53CinfoRuntimeFile);
+        errno = 0;
+        const int result = fclose(g_V53CinfoRuntimeFile);
+        const int closeErr = errno;
+        g_V53CinfoRuntimeFile = nullptr;
+
+        FLog("V53 CINFO fclose | result=%d | total=%llu | errno=%d | %s",
+             result, g_V53CinfoBytesWritten, closeErr, strerror(closeErr));
+
+        return result;
+    }
+
+    return CFileMgr_CloseFile_V53_Original(file);
 }
 
 static uint32_t dwRLEDecompressSourceSize = 0;
@@ -4114,8 +4192,24 @@ void InstallSpecialHooks()
 	CHook::InlineHook("_ZN22TextureDatabaseRuntime15LoadFullTextureEj", &LoadFullTexture_hook, &LoadFullTexture);
 
     CHook::InlineHook("_ZN8CFileMgr18OpenFileForWritingEPKc",
-                      &CFileMgr_OpenFileForWriting_V52_hook,
-                      &CFileMgr_OpenFileForWriting_V52_Original);
+                      &CFileMgr_OpenFileForWriting_V53_hook,
+                      &CFileMgr_OpenFileForWriting_V53_Original);
+
+#if VER_x32
+    CHook::InlineHook("_ZN8CFileMgr5WriteEiPci",
+                      &CFileMgr_Write_V53_hook,
+                      &CFileMgr_Write_V53_Original);
+    CHook::InlineHook("_ZN8CFileMgr9CloseFileEi",
+                      &CFileMgr_CloseFile_V53_hook,
+                      &CFileMgr_CloseFile_V53_Original);
+#else
+    CHook::InlineHook("_ZN8CFileMgr5WriteEyPci",
+                      &CFileMgr_Write_V53_hook,
+                      &CFileMgr_Write_V53_Original);
+    CHook::InlineHook("_ZN8CFileMgr9CloseFileEy",
+                      &CFileMgr_CloseFile_V53_hook,
+                      &CFileMgr_CloseFile_V53_Original);
+#endif
 
     CHook::InlineHook("_Z11OS_FileReadPvS_i", &OS_FileRead_hook, &OS_FileRead);
 
