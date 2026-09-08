@@ -583,6 +583,185 @@ static std::atomic<int> g_v29LastNonZeroFbo{-1};
 void (*Render2dStuff_V26_Original)();
 
 // =============================================================================
+// V64 - RENDERQUEUE CONSUMER TRACE
+//
+// V63 proved that even a persistent, untextured RwIm2D primitive is submitted
+// by the producer but is not visible in the frame acknowledged by V61.
+//
+// Important distinction:
+//   producer "submitted 2D" != graphics thread "executed 2D".
+//
+// These hooks OBSERVE the GTA's existing RenderQueue command handlers. They do
+// not call RenderQueue::Flush/Process and do not move rendering across threads.
+// The goal is to correlate:
+//   1) V63 probe submission on the producer thread;
+//   2) rqDrawIndexed/rqDrawNonIndexed execution on GraphicsThread;
+//   3) target/FBO selected there;
+//   4) rqSwapBuffers / our EGL presentation.
+//
+// This is diagnostic-only and deliberately bounded to avoid log flooding.
+// =============================================================================
+static std::atomic<unsigned int> g_v64RqDrawExecTotal{0};
+static std::atomic<unsigned int> g_v64RqDrawIndexedExec{0};
+static std::atomic<unsigned int> g_v64RqDrawNonIndexedExec{0};
+static std::atomic<unsigned int> g_v64RqTargetSelectExec{0};
+static std::atomic<unsigned int> g_v64RqSwapExec{0};
+
+static std::atomic<unsigned int> g_v64ProbeSeq{0};
+static std::atomic<unsigned int> g_v64ProbeDrawBase{0};
+static std::atomic<unsigned int> g_v64ProbeSwapBase{0};
+
+static std::atomic<int> g_v64LastRqDrawTid{-1};
+static std::atomic<int> g_v64LastRqDrawFbo{-1};
+static std::atomic<int> g_v64LastRqTargetFbo{-1};
+
+static void (*V64RQDrawIndexed_Original)(char*&) = nullptr;
+static void (*V64RQDrawNonIndexed_Original)(char*&) = nullptr;
+static void (*V64RQTargetSelect_Original)(char*&) = nullptr;
+static void (*V64RQSwapBuffers_Original)(char*&) = nullptr;
+
+static inline GLint V64CurrentFboIfPossible()
+{
+    if (eglGetCurrentContext() == EGL_NO_CONTEXT)
+        return -1;
+
+    GLint fbo = -1;
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &fbo);
+    return fbo;
+}
+
+static inline bool V64ShouldTraceConsumer(
+        unsigned int total,
+        unsigned int probeSeq,
+        unsigned int probeBase)
+{
+    if (probeSeq == 0)
+        return false;
+
+    // First connected/probe frames get a detailed trace. Afterwards only sparse
+    // checkpoints are kept.
+    if (probeSeq <= 16 && total <= probeBase + 80)
+        return true;
+
+    return (total % 1000u) == 0u;
+}
+
+static void V64RQDrawIndexed_hook(char*& command)
+{
+    const unsigned int indexed =
+            g_v64RqDrawIndexedExec.fetch_add(1, std::memory_order_relaxed) + 1;
+    const unsigned int total =
+            g_v64RqDrawExecTotal.fetch_add(1, std::memory_order_acq_rel) + 1;
+
+    const unsigned int probeSeq =
+            g_v64ProbeSeq.load(std::memory_order_acquire);
+    const unsigned int probeBase =
+            g_v64ProbeDrawBase.load(std::memory_order_acquire);
+
+    const int tid = V29GetTid();
+    const GLint fbo = V64CurrentFboIfPossible();
+    g_v64LastRqDrawTid.store(tid, std::memory_order_release);
+    g_v64LastRqDrawFbo.store((int)fbo, std::memory_order_release);
+
+    if (V64ShouldTraceConsumer(total, probeSeq, probeBase))
+    {
+        FLog("V64 RQ DRAWI EXEC | total=%u indexed=%u probe=%u base=%u delta=%u tid=%d ctx=%p fbo=%d cmd=%p",
+             total, indexed, probeSeq, probeBase,
+             total >= probeBase ? total - probeBase : 0u,
+             tid, (void*)eglGetCurrentContext(), (int)fbo, (void*)command);
+    }
+
+    if (V64RQDrawIndexed_Original)
+        V64RQDrawIndexed_Original(command);
+}
+
+static void V64RQDrawNonIndexed_hook(char*& command)
+{
+    const unsigned int nonIndexed =
+            g_v64RqDrawNonIndexedExec.fetch_add(1, std::memory_order_relaxed) + 1;
+    const unsigned int total =
+            g_v64RqDrawExecTotal.fetch_add(1, std::memory_order_acq_rel) + 1;
+
+    const unsigned int probeSeq =
+            g_v64ProbeSeq.load(std::memory_order_acquire);
+    const unsigned int probeBase =
+            g_v64ProbeDrawBase.load(std::memory_order_acquire);
+
+    const int tid = V29GetTid();
+    const GLint fbo = V64CurrentFboIfPossible();
+    g_v64LastRqDrawTid.store(tid, std::memory_order_release);
+    g_v64LastRqDrawFbo.store((int)fbo, std::memory_order_release);
+
+    if (V64ShouldTraceConsumer(total, probeSeq, probeBase))
+    {
+        FLog("V64 RQ DRAWN EXEC | total=%u nonIndexed=%u probe=%u base=%u delta=%u tid=%d ctx=%p fbo=%d cmd=%p",
+             total, nonIndexed, probeSeq, probeBase,
+             total >= probeBase ? total - probeBase : 0u,
+             tid, (void*)eglGetCurrentContext(), (int)fbo, (void*)command);
+    }
+
+    if (V64RQDrawNonIndexed_Original)
+        V64RQDrawNonIndexed_Original(command);
+}
+
+static void V64RQTargetSelect_hook(char*& command)
+{
+    const unsigned int n =
+            g_v64RqTargetSelectExec.fetch_add(1, std::memory_order_relaxed) + 1;
+
+    if (V64RQTargetSelect_Original)
+        V64RQTargetSelect_Original(command);
+
+    const GLint fbo = V64CurrentFboIfPossible();
+    g_v64LastRqTargetFbo.store((int)fbo, std::memory_order_release);
+
+    const unsigned int probeSeq =
+            g_v64ProbeSeq.load(std::memory_order_acquire);
+
+    if ((probeSeq > 0 && probeSeq <= 16 && n <= 160) || (n % 1000u) == 0u)
+    {
+        FLog("V64 RQ TARGET EXEC | n=%u probe=%u tid=%d ctx=%p fboAfter=%d",
+             n, probeSeq, V29GetTid(),
+             (void*)eglGetCurrentContext(), (int)fbo);
+    }
+}
+
+static void V64RQSwapBuffers_hook(char*& command)
+{
+    const unsigned int n =
+            g_v64RqSwapExec.fetch_add(1, std::memory_order_relaxed) + 1;
+
+    const unsigned int probeSeq =
+            g_v64ProbeSeq.load(std::memory_order_acquire);
+    const unsigned int base =
+            g_v64ProbeDrawBase.load(std::memory_order_acquire);
+    const unsigned int now =
+            g_v64RqDrawExecTotal.load(std::memory_order_acquire);
+
+    if ((probeSeq > 0 && probeSeq <= 16) || (n % 120u) == 0u)
+    {
+        FLog("V64 RQ SWAP BEGIN | n=%u probe=%u rqNow=%u base=%u delta=%u tid=%d ctx=%p fbo=%d",
+             n, probeSeq, now, base,
+             now >= base ? now - base : 0u,
+             V29GetTid(), (void*)eglGetCurrentContext(),
+             (int)V64CurrentFboIfPossible());
+    }
+
+    if (V64RQSwapBuffers_Original)
+        V64RQSwapBuffers_Original(command);
+
+    if ((probeSeq > 0 && probeSeq <= 16) || (n % 120u) == 0u)
+    {
+        const unsigned int after =
+                g_v64RqDrawExecTotal.load(std::memory_order_acquire);
+        FLog("V64 RQ SWAP END | n=%u probe=%u rqAfter=%u base=%u delta=%u tid=%d ctx=%p",
+             n, probeSeq, after, base,
+             after >= base ? after - base : 0u,
+             V29GetTid(), (void*)eglGetCurrentContext());
+    }
+}
+
+// =============================================================================
 // V63 - RW 2D PERSISTENT PRIMITIVE PROBE
 //
 // V61 proved that the next 3D pass can be held until the EGL/present thread has
@@ -660,12 +839,25 @@ static void V63SubmitRw2DProbe(unsigned int seq)
     RwRenderStateSet(rwRENDERSTATETEXTUREADDRESS, (void*)rwTEXTUREADDRESSCLAMP);
     RwRenderStateSet(rwRENDERSTATETEXTURERASTER, (void*)0);
 
-    RwIm2DRenderIndexedPrimitive(rwPRIMTYPETRILIST, v, 4, s_indices, 6);
+    // V64: snapshot the graphics-consumer progress immediately before the
+    // unique last 2D probe is submitted.
+    const unsigned int v64RqBase =
+            g_v64RqDrawExecTotal.load(std::memory_order_acquire);
+    const unsigned int v64SwapBase =
+            g_v64RqSwapExec.load(std::memory_order_acquire);
+    g_v64ProbeDrawBase.store(v64RqBase, std::memory_order_release);
+    g_v64ProbeSwapBase.store(v64SwapBase, std::memory_order_release);
+    g_v64ProbeSeq.store(seq, std::memory_order_release);
+
+    const RwBool v64ProbeResult =
+            RwIm2DRenderIndexedPrimitive(
+                    rwPRIMTYPETRILIST, v, 4, s_indices, 6);
 
     if (seq <= 16 || (seq % 120) == 0)
     {
-        FLog("V63 RW2D PERSISTENT PROBE SUBMIT | seq=%u tid=%d v=%p idx=%p nearZ=%.6f recip=%.6f rect=%.0f,%.0f-%.0f,%.0f",
-             seq, V29GetTid(), (void*)v, (void*)s_indices,
+        FLog("V64 RW2D PROBE SUBMIT | seq=%u result=%d rqBase=%u swapBase=%u tid=%d v=%p idx=%p nearZ=%.6f recip=%.6f rect=%.0f,%.0f-%.0f,%.0f",
+             seq, (int)v64ProbeResult, v64RqBase, v64SwapBase,
+             V29GetTid(), (void*)v, (void*)s_indices,
              (double)nearScreenZ, (double)recipNearClip,
              (double)x0, (double)y0, (double)x1, (double)y1);
     }
@@ -1764,9 +1956,51 @@ static EGLBoolean eglSwapBuffers_V29_hook(EGLDisplay dpy, EGLSurface surface)
             // hang logo no ALTTEST em uma execucao e SIGSEGV posterior em
             // RQ_Command_rqVertexBufferDelete em outra. Aqui fazemos apenas
             // sincronizacao GL segura + blit.
+            // V64: compare producer-side probe submission with the commands
+            // that the GTA GraphicsThread has ACTUALLY consumed before this
+            // presentation.  This is the distinction V61 could not observe.
+            const unsigned int v64ProbeSeq =
+                    g_v64ProbeSeq.load(std::memory_order_acquire);
+            const unsigned int v64RqBase =
+                    g_v64ProbeDrawBase.load(std::memory_order_acquire);
+            const unsigned int v64RqBeforeFinish =
+                    g_v64RqDrawExecTotal.load(std::memory_order_acquire);
+            const unsigned int v64RqSwapBase =
+                    g_v64ProbeSwapBase.load(std::memory_order_acquire);
+            const unsigned int v64RqSwapNow =
+                    g_v64RqSwapExec.load(std::memory_order_acquire);
+
+            if (v64ProbeSeq == v38Completed &&
+                (v38Completed <= 16 || (v38Completed % 120) == 0))
+            {
+                FLog("V64 PROBE PRESENT PRE | completed=%u probe=%u rqNow=%u base=%u delta=%u rqSwapNow=%u swapBase=%u lastRqTid=%d lastRqFbo=%d lastTargetFbo=%d eglTid=%d eglFbo=%d",
+                     v38Completed, v64ProbeSeq,
+                     v64RqBeforeFinish, v64RqBase,
+                     v64RqBeforeFinish >= v64RqBase
+                         ? v64RqBeforeFinish - v64RqBase : 0u,
+                     v64RqSwapNow, v64RqSwapBase,
+                     g_v64LastRqDrawTid.load(std::memory_order_acquire),
+                     g_v64LastRqDrawFbo.load(std::memory_order_acquire),
+                     g_v64LastRqTargetFbo.load(std::memory_order_acquire),
+                     swapTid, (int)fbo);
+            }
+
             // The producer is excluded for the entire finish+copy window.
             glFinish();
             const GLenum v38FinishErr = glGetError();
+
+            const unsigned int v64RqAfterFinish =
+                    g_v64RqDrawExecTotal.load(std::memory_order_acquire);
+            if (v64ProbeSeq == v38Completed &&
+                (v38Completed <= 16 || (v38Completed % 120) == 0))
+            {
+                FLog("V64 PROBE PRESENT POSTFINISH | completed=%u probe=%u rqNow=%u base=%u delta=%u glFinishErr=0x%x",
+                     v38Completed, v64ProbeSeq,
+                     v64RqAfterFinish, v64RqBase,
+                     v64RqAfterFinish >= v64RqBase
+                         ? v64RqAfterFinish - v64RqBase : 0u,
+                     (unsigned int)v38FinishErr);
+            }
 
             // V40: once the queued work is complete, enumerate already-existing
             // framebuffer objects. This is diagnostic only and is intended to
@@ -4717,7 +4951,23 @@ void InstallHooks()
         }
     }
 
-    FLog("V63 INSTALL: V61_NEXT3D_GATE + RW2D_PERSISTENT_PROBE + SAFE_EGL_BLIT");
+    // V64: observe the existing RenderQueue consumer.  Unlike V36/V57 these
+    // hooks NEVER invoke RenderQueue::Flush/Process or move commands between
+    // threads; they simply wrap handlers that the GraphicsThread already calls.
+    CHook::InlineHook("_Z24RQ_Command_rqDrawIndexedRPc",
+                      &V64RQDrawIndexed_hook,
+                      &V64RQDrawIndexed_Original);
+    CHook::InlineHook("_Z27RQ_Command_rqDrawNonIndexedRPc",
+                      &V64RQDrawNonIndexed_hook,
+                      &V64RQDrawNonIndexed_Original);
+    CHook::InlineHook("_Z25RQ_Command_rqTargetSelectRPc",
+                      &V64RQTargetSelect_hook,
+                      &V64RQTargetSelect_Original);
+    CHook::InlineHook("_Z24RQ_Command_rqSwapBuffersRPc",
+                      &V64RQSwapBuffers_hook,
+                      &V64RQSwapBuffers_Original);
+
+    FLog("V64 INSTALL: V63_PERSISTENT_PROBE + RQ_CONSUMER_TRACE + V61_GATE + SAFE_EGL_BLIT");
 
     g_v29EglSwapStub = shadowhook_hook_sym_name(
             "libEGL.so",
