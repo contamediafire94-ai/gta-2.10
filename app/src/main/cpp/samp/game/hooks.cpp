@@ -3448,12 +3448,55 @@ if(!strncmp(r1+12, "mainV1.scm", 10))
         FLog("Loading weapon.dat..");
     }
 
-    // Arquivos de animacao importados pelo proprio launcher.
-    // Ex.: ANIM/PED.IFP -> anim_app/PED.IFP
+    // V54 - ANIM resolver robusto.
+    // O Android e case-sensitive e a Data pode trazer PED.IFP/ped.ifp,
+    // alem de existir uma camada anim/ extra em alguns pacotes.
+    // Resolve o nome real antes de entregar o arquivo ao GTA.
     if (!strncmp(r1, "ANIM/", 5) || !strncmp(r1, "anim/", 5))
     {
-        snprintf(path, sizeof(path), "%sanim_app/%s", WIU_INTERNAL_ROOT, r1 + 5);
-        FLog("Redirecting ANIM -> %s", path);
+        const char* relativeAnim = r1 + 5;
+
+        char animBases[6][255]{};
+        snprintf(animBases[0], sizeof(animBases[0]),
+                 "%sanim_app", WIU_INTERNAL_ROOT);
+        snprintf(animBases[1], sizeof(animBases[1]),
+                 "%sanim_app/anim", WIU_INTERNAL_ROOT);
+        snprintf(animBases[2], sizeof(animBases[2]),
+                 "%sanim_app/ANIM", WIU_INTERNAL_ROOT);
+        snprintf(animBases[3], sizeof(animBases[3]),
+                 "%sanim_app", g_pszStorage);
+        snprintf(animBases[4], sizeof(animBases[4]),
+                 "%sanim_app/anim", g_pszStorage);
+        snprintf(animBases[5], sizeof(animBases[5]),
+                 "%sanim", g_pszStorage);
+
+        bool foundAnim = false;
+
+        for (int i = 0; i < 6; ++i)
+        {
+            char resolvedAnim[255]{};
+
+            if (V48ResolveReadablePathCaseInsensitive(
+                    animBases[i],
+                    relativeAnim,
+                    resolvedAnim,
+                    sizeof(resolvedAnim)))
+            {
+                snprintf(path, sizeof(path), "%s", resolvedAnim);
+                FLog("V54 ANIM selected | candidate=%d | request=%s | path=%s",
+                     i, r1, path);
+                foundAnim = true;
+                break;
+            }
+        }
+
+        if (!foundAnim)
+        {
+            snprintf(path, sizeof(path), "%sanim_app/%s",
+                     WIU_INTERNAL_ROOT, relativeAnim);
+            FLog("V54 ANIM no readable candidate | request=%s | fallback=%s",
+                 r1, path);
+        }
     }
 
     // V50 - BYPASS DO CINFO.BIN IMPORTADO.
