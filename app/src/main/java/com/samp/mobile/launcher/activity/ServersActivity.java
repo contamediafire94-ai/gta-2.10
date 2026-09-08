@@ -61,7 +61,7 @@ public class ServersActivity extends AppCompatActivity {
 
     // V45 - DATA privada interna
     private static final int REQUEST_INTERNAL_DATA_FOLDER = 9045;
-    private static final String PREF_INTERNAL_DATA_READY = "wiu_internal_data_v51";
+    private static final String PREF_INTERNAL_DATA_READY = "wiu_internal_data_v48";
 
     // Coloque aqui o convite oficial da sua comunidade quando quiser ativar o botão.
     private static final String DISCORD_URL = "";
@@ -1080,7 +1080,7 @@ public class ServersActivity extends AppCompatActivity {
                 .setTitle("Instalar arquivos do jogo")
                 .setMessage(
                         "Selecione a pasta BetaTesterData que contém:\n\n" +
-                        "anim • audio • data • models • SAMP • texdb • TEXDB\n" +
+                        "anim • audio • data • models • SAMP • texdb\n" +
                         "CINFO.BIN • stream.ini\n\n" +
                         "O launcher vai copiar esses arquivos uma vez para a área privada do app."
                 )
@@ -1108,25 +1108,11 @@ public class ServersActivity extends AppCompatActivity {
                 5
         );
 
-        // V51: os IMG grandes da pasta TEXDB também precisam estar na área
-        // privada. Sem eles o GTA volta para Android/data e recebe EACCES.
-        File texdbImgRoot = new File(root, "texdb_img_app");
-        File gta3Img = findFileIgnoreCase(texdbImgRoot, "GTA3.IMG", 2);
-        File gtaIntImg = findFileIgnoreCase(texdbImgRoot, "GTA_INT.IMG", 2);
-        File sampImg = findFileIgnoreCase(texdbImgRoot, "SAMP.IMG", 2);
-        File sampColImg = findFileIgnoreCase(texdbImgRoot, "SAMPCOL.IMG", 2);
-        File cutsceneImg = findFileIgnoreCase(texdbImgRoot, "CUTSCENE.IMG", 2);
-
         boolean ready =
                 isNonEmptyFile(fonts)
                         && isNonEmptyFile(pedEvent)
                         && texdbIndex != null
                         && isNonEmptyFile(texdbIndex)
-                        && isNonEmptyFile(gta3Img)
-                        && isNonEmptyFile(gtaIntImg)
-                        && isNonEmptyFile(sampImg)
-                        && isNonEmptyFile(sampColImg)
-                        && isNonEmptyFile(cutsceneImg)
                         && new File(root, "SAMP_app").isDirectory()
                         && new File(root, "anim_app").isDirectory()
                         && new File(root, "models").isDirectory()
@@ -1194,7 +1180,7 @@ public class ServersActivity extends AppCompatActivity {
     }
 
     private boolean isNonEmptyFile(File file) {
-        return file != null && file.isFile() && file.length() > 0;
+        return file.isFile() && file.length() > 0;
     }
 
     private void abrirSeletorDataInterna() {
@@ -1276,13 +1262,8 @@ public class ServersActivity extends AppCompatActivity {
                         findDocumentChild(treeUri, rootDocumentUri, "models");
                 DocumentEntry samp =
                         findDocumentChild(treeUri, rootDocumentUri, "SAMP");
-                // V51: a Data possui duas pastas diferentes que só mudam
-                // pelas maiúsculas/minúsculas: texdb (índices/texturas) e
-                // TEXDB (arquivos .IMG). Aqui precisamos diferenciar as duas.
                 DocumentEntry texdb =
-                        findDocumentChildExactCase(treeUri, rootDocumentUri, "texdb");
-                DocumentEntry texdbImg =
-                        findDocumentChildExactCase(treeUri, rootDocumentUri, "TEXDB");
+                        findDocumentChild(treeUri, rootDocumentUri, "texdb");
                 DocumentEntry cinfo =
                         findDocumentChild(treeUri, rootDocumentUri, "CINFO.BIN");
                 DocumentEntry stream =
@@ -1294,7 +1275,6 @@ public class ServersActivity extends AppCompatActivity {
                 requireDirectory(models, "models");
                 requireDirectory(samp, "SAMP");
                 requireDirectory(texdb, "texdb");
-                requireDirectory(texdbImg, "TEXDB");
                 requireFile(cinfo, "CINFO.BIN");
                 requireFile(stream, "stream.ini");
 
@@ -1313,9 +1293,6 @@ public class ServersActivity extends AppCompatActivity {
                 File texdbDest = new File(texdbBase, "texdb");
                 ensureDirectory(texdbDest);
 
-                // V51: destino separado para os .IMG da pasta TEXDB.
-                File texdbImgDest = prepareCleanDirectory(root, "texdb_img_app");
-
                 File modelsDest = prepareCleanDirectory(root, "models");
 
                 copyDocumentDirectoryContents(treeUri, anim.uri, animDest);
@@ -1331,7 +1308,6 @@ public class ServersActivity extends AppCompatActivity {
 
                 copyDocumentDirectoryContents(treeUri, samp.uri, sampDest);
                 copyDocumentDirectoryContents(treeUri, texdb.uri, texdbDest);
-                copyDocumentDirectoryContents(treeUri, texdbImg.uri, texdbImgDest);
                 copyDocumentDirectoryContents(treeUri, models.uri, modelsDest);
 
                 File cinfoDest = new File(root, "CINFO_APP.BIN");
@@ -1387,28 +1363,9 @@ public class ServersActivity extends AppCompatActivity {
                     );
                 }
 
-                // V51: confirma os IMG que o log mostrou como Permission denied.
-                String[] requiredTexdbImgs = {
-                        "GTA3.IMG",
-                        "GTA_INT.IMG",
-                        "SAMP.IMG",
-                        "SAMPCOL.IMG",
-                        "CUTSCENE.IMG"
-                };
-
-                for (String imgName : requiredTexdbImgs) {
-                    File img = findFileIgnoreCase(texdbImgDest, imgName, 2);
-                    if (img == null || !isNonEmptyFile(img)) {
-                        throw new IOException(
-                                imgName + " não foi encontrado dentro da pasta TEXDB."
-                        );
-                    }
-                }
-
                 if (!new File(root, "SAMP_app").isDirectory()
                         || !new File(root, "anim_app").isDirectory()
-                        || !new File(root, "models").isDirectory()
-                        || !new File(root, "texdb_img_app").isDirectory()) {
+                        || !new File(root, "models").isDirectory()) {
                     throw new IOException("A estrutura interna ficou incompleta.");
                 }
 
@@ -1554,79 +1511,6 @@ public class ServersActivity extends AppCompatActivity {
                 String displayName = cursor.getString(nameColumn);
 
                 if (!wantedName.equalsIgnoreCase(displayName)) {
-                    continue;
-                }
-
-                String documentId = cursor.getString(idColumn);
-                String mimeType = cursor.getString(mimeColumn);
-
-                Uri childUri =
-                        DocumentsContract.buildDocumentUriUsingTree(
-                                treeUri,
-                                documentId
-                        );
-
-                boolean directory =
-                        DocumentsContract.Document.MIME_TYPE_DIR.equals(
-                                mimeType
-                        );
-
-                return new DocumentEntry(childUri, directory);
-            }
-        }
-
-        return null;
-    }
-
-    // V51: diferente de findDocumentChild(), este método respeita
-    // maiúsculas/minúsculas. É necessário porque a Data pode conter
-    // simultaneamente as pastas "texdb" e "TEXDB".
-    private DocumentEntry findDocumentChildExactCase(
-            Uri treeUri,
-            Uri parentDocumentUri,
-            String wantedName
-    ) throws IOException {
-        ContentResolver resolver = getContentResolver();
-
-        Uri childrenUri =
-                DocumentsContract.buildChildDocumentsUriUsingTree(
-                        treeUri,
-                        DocumentsContract.getDocumentId(parentDocumentUri)
-                );
-
-        String[] projection = new String[]{
-                DocumentsContract.Document.COLUMN_DOCUMENT_ID,
-                DocumentsContract.Document.COLUMN_DISPLAY_NAME,
-                DocumentsContract.Document.COLUMN_MIME_TYPE
-        };
-
-        try (Cursor cursor = resolver.query(
-                childrenUri,
-                projection,
-                null,
-                null,
-                null
-        )) {
-            if (cursor == null) {
-                throw new IOException(
-                        "Não foi possível ler a pasta selecionada."
-                );
-            }
-
-            int idColumn = cursor.getColumnIndexOrThrow(
-                    DocumentsContract.Document.COLUMN_DOCUMENT_ID
-            );
-            int nameColumn = cursor.getColumnIndexOrThrow(
-                    DocumentsContract.Document.COLUMN_DISPLAY_NAME
-            );
-            int mimeColumn = cursor.getColumnIndexOrThrow(
-                    DocumentsContract.Document.COLUMN_MIME_TYPE
-            );
-
-            while (cursor.moveToNext()) {
-                String displayName = cursor.getString(nameColumn);
-
-                if (!wantedName.equals(displayName)) {
                     continue;
                 }
 
