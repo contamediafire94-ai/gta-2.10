@@ -1461,6 +1461,98 @@ static bool V60PresentPreserveAB(
     return ok;
 }
 
+
+// =============================================================================
+// V61 - NEXT-3D GATE
+//
+// V60 proved FBO0 does not contain the missing HUD/TextDraw layer. The more
+// important ordering visible in the log is:
+//   swap/blit -> Render2dStuff -> next 3D pass
+// so the next 3D frame can overwrite the offscreen target before the graphics
+// thread presents the 2D commands.
+//
+// Do not wait inside Render2dStuff (V56 deadlocked/timed out there). Instead,
+// after Render2dStuff has returned, stop at the FIRST 3D stage of the next
+// frame until the EGL thread acknowledges that the latest completed 2D pass
+// was presented. This leaves the render thread free to execute/swap the
+// previous frame while preventing the producer from queueing the next 3D pass.
+// =============================================================================
+static std::atomic<unsigned int> g_v61GateWaits{0};
+static std::atomic<unsigned int> g_v61GatePresented{0};
+static std::atomic<unsigned int> g_v61GateTimeouts{0};
+
+static void V61WaitForPrevious2DAtNext3D(unsigned int barSeq)
+{
+    const unsigned int target =
+            g_v37TwoDCompleted.load(std::memory_order_acquire);
+    if (target == 0)
+        return;
+
+    unsigned int presented =
+            g_v56PresentedTwoD.load(std::memory_order_acquire);
+    if (presented >= target)
+        return;
+
+    const unsigned int waitNo =
+            g_v61GateWaits.fetch_add(1, std::memory_order_relaxed) + 1;
+
+    if (waitNo <= 16 || (waitNo % 120) == 0)
+    {
+        FLog("V61 NEXT3D WAIT BEGIN | wait=%u barSeq=%u target2d=%u presented=%u tid=%d",
+             waitNo, barSeq, target, presented, V29GetTid());
+    }
+
+    // Bounded wait: diagnostics must never be able to freeze the game.
+    // Render2dStuff has already returned, so the graphics/EGL thread is free
+    // to consume the queued 2D work and call eglSwapBuffers.
+    unsigned int waitedMs = 0;
+    while (waitedMs < 50)
+    {
+        usleep(1000);
+        ++waitedMs;
+
+        presented = g_v56PresentedTwoD.load(std::memory_order_acquire);
+        if (presented >= target)
+            break;
+    }
+
+    const bool ok = (presented >= target);
+    if (ok)
+        g_v61GatePresented.fetch_add(1, std::memory_order_relaxed);
+    else
+        g_v61GateTimeouts.fetch_add(1, std::memory_order_relaxed);
+
+    if (waitNo <= 16 || !ok || (waitNo % 120) == 0)
+    {
+        FLog("V61 NEXT3D WAIT END | wait=%u barSeq=%u target2d=%u presented=%u waitedMs=%u result=%s",
+             waitNo, barSeq, target, presented, waitedMs,
+             ok ? "PRESENTED" : "TIMEOUT");
+    }
+}
+
+static bool V61PresentCurrentWorld(
+        unsigned int swapSeq,
+        int swapTid,
+        GLint currentFbo,
+        const GLint viewport[4],
+        EGLint surfaceWidth,
+        EGLint surfaceHeight)
+{
+    const bool ok = V31PresentOffscreenToDefault(
+            swapSeq, swapTid, currentFbo, viewport,
+            surfaceWidth, surfaceHeight);
+
+    static std::atomic<unsigned int> seq{0};
+    const unsigned int n = seq.fetch_add(1, std::memory_order_relaxed) + 1;
+    if (n <= 12 || (n % 120) == 0)
+    {
+        FLog("V61 PRESENT CURRENT | n=%u swap=%u tid=%d source=%d ok=%d completed2d=%u",
+             n, swapSeq, swapTid, (int)currentFbo, ok ? 1 : 0,
+             g_v37TwoDCompleted.load(std::memory_order_acquire));
+    }
+    return ok;
+}
+
 static EGLBoolean eglSwapBuffers_V29_hook(EGLDisplay dpy, EGLSurface surface)
 {
     if (!eglSwapBuffers_V29_Original)
@@ -1599,7 +1691,7 @@ static EGLBoolean eglSwapBuffers_V29_hook(EGLDisplay dpy, EGLSurface surface)
                      (unsigned int)v38FinishErr);
             }
 
-            V60PresentPreserveAB(
+            V61PresentCurrentWorld(
                     current, swapTid, fbo, viewport, width, height);
 
             // V56: a copia terminou enquanto a thread EGL possui contexto
@@ -2629,6 +2721,12 @@ void CRenderer__RenderEverythingBarRoads_hook() {
             }
 
             currentBarSeq = ++v20BarRoadsSeq;
+
+            // V61: Render2dStuff from the previous frame has already returned.
+            // Gate the first 3D stage of this next frame until EGL confirms
+            // that the latest completed 2D pass was actually presented.
+            V61WaitForPrevious2DAtNext3D(currentBarSeq);
+
             v20TraceThisCall = currentBarSeq <= 12;
             if (v20TraceThisCall)
             {
@@ -4525,7 +4623,7 @@ void InstallHooks()
         }
     }
 
-    FLog("V60 INSTALL: GTA_ORIGINAL_2D + SAMP_POSTLAYERS + PRESERVE_FBO0_AB + SAFE_EGL_BLIT");
+    FLog("V61 INSTALL: GTA_ORIGINAL_2D + SAMP_POSTLAYERS + NEXT3D_PRESENT_GATE + SAFE_EGL_BLIT");
 
     g_v29EglSwapStub = shadowhook_hook_sym_name(
             "libEGL.so",
