@@ -541,33 +541,11 @@ void Render2dStuff()
         FLog("V38 2D MUTEX UNLOCK | seq=%u tid=%d",
              v21TwoDCurrent, (int)syscall(SYS_gettid));
 
-    // V56: nao deixa o produtor iniciar o proximo passe 3D imediatamente
-    // depois do 2D. Esperamos por um curto periodo ate a thread EGL copiar
-    // o FBO que acabou de receber HUD/chat/radar/TextDraw para o framebuffer
-    // apresentado. Timeout curto evita deadlock caso o app perca a surface.
-    if (pNetGame && pNetGame->GetGameState() == GAMESTATE_CONNECTED)
-    {
-        const unsigned int target2D = v21TwoDCurrent;
-        unsigned int ack2D =
-                g_v56PresentedTwoD.load(std::memory_order_acquire);
-
-        if (v21TraceTwoD)
-            FLog("V56 PRESENT WAIT BEGIN | seq=%u ack=%u",
-                 target2D, ack2D);
-
-        int waitedUs = 0;
-        while (ack2D < target2D && waitedUs < 20000)
-        {
-            usleep(250);
-            waitedUs += 250;
-            ack2D = g_v56PresentedTwoD.load(std::memory_order_acquire);
-        }
-
-        if (v21TraceTwoD || ack2D < target2D)
-            FLog("V56 PRESENT WAIT END | seq=%u ack=%u waitedUs=%d result=%s",
-                 target2D, ack2D, waitedUs,
-                 ack2D >= target2D ? "PRESENTED" : "TIMEOUT");
-    }
+    // V57: nao bloqueamos mais aqui. A V56 provou que esperar dentro
+    // de Render2dStuff() sempre termina em TIMEOUT, porque o eglSwapBuffers
+    // que pode apresentar o frame so acontece depois que esta funcao retorna.
+    // A sincronizacao agora e feita na propria thread EGL, imediatamente
+    // antes do glFinish/blit.
 }
 
 // =============================================================================
@@ -1444,6 +1422,42 @@ static EGLBoolean eglSwapBuffers_V29_hook(EGLDisplay dpy, EGLSurface surface)
         {
             V30ProbeCurrentRenderTarget(
                     current, swapTid, fbo, viewport, width, height);
+
+            // V57: o log da V56 mostrou que Render2dStuff roda sem contexto
+            // EGL (ctx=0/draw=0). Portanto o emu_FlushAltRenderTarget feito
+            // no produtor pode apenas enfileirar trabalho. Repetimos o teste
+            // e o flush AQUI, na thread que possui o contexto/surface real,
+            // antes de esperar a GPU e copiar o FBO para a tela.
+            if (v38Completed > 0)
+            {
+                const uintptr_t v57AltTestTarget =
+                        g_libGTASA + (VER_x32 ? 0x001BB7F4 + 1 : 0x24EA90);
+                const uintptr_t v57AltFlushTarget =
+                        g_libGTASA + (VER_x32 ? 0x001BC20C + 1 : 0x24F5B8);
+
+                const bool v57AltActive =
+                        CHook::CallFunction<bool>(v57AltTestTarget);
+
+                if (v38Completed <= 8 || (v38Completed % 120) == 0)
+                {
+                    FLog("V57 EGL ALTTEST | swap=%u tid=%d completed=%u altRT=%d ctx=%p draw=%p",
+                         current, swapTid, v38Completed,
+                         v57AltActive ? 1 : 0,
+                         (void*)eglGetCurrentContext(),
+                         (void*)eglGetCurrentSurface(EGL_DRAW));
+                }
+
+                if (v57AltActive)
+                {
+                    CHook::CallFunction<void>(v57AltFlushTarget);
+
+                    if (v38Completed <= 8 || (v38Completed % 120) == 0)
+                    {
+                        FLog("V57 EGL ALTFLUSH | swap=%u tid=%d completed=%u",
+                             current, swapTid, v38Completed);
+                    }
+                }
+            }
 
             // The producer is excluded for the entire finish+copy window.
             glFinish();
@@ -4388,7 +4402,7 @@ void InstallHooks()
         }
     }
 
-    FLog("V42 INSTALL: V40_BASE + ORIGINAL_ES2_CPU_STATE + ORIGINAL_CRQ_SELECTOR + V31_FALLBACK");
+    FLog("V57 INSTALL: EGL_ALTFLUSH + V40_BASE + ORIGINAL_ES2_CPU_STATE + ORIGINAL_CRQ_SELECTOR + V31_FALLBACK");
 
     g_v29EglSwapStub = shadowhook_hook_sym_name(
             "libEGL.so",
