@@ -1325,6 +1325,130 @@ static void V40EnumerateFramebufferObjectsOnce(
          swapSeq, swapTid, (int)savedFbo, (unsigned int)restoreErr);
 }
 
+
+// =============================================================================
+// V59 - FBO SOURCE A/B TEST
+//
+// V58 proved that GTA original 2D + SA-MP TextDraw/UI submissions are stable,
+// but the visible manual blit still contains only the 3D scene. V40 found two
+// adjacent complete FBOs at the end of the first 2D frame (for example 15/16).
+//
+// V59 does NOT call any private RenderQueue function. It only changes which
+// already-existing COMPLETE framebuffer is copied to FBO0 by the proven V31
+// glBlitFramebuffer path:
+//   phase A: current FBO      (baseline scene)
+//   phase B: current FBO - 1  (secondary candidate)
+//   phase C: current FBO      (baseline restored)
+//
+// Each phase lasts 240 eligible presented frames. This is a controlled visual
+// test to determine whether HUD/radar/TextDraw ended up in the adjacent FBO.
+// =============================================================================
+static std::atomic<unsigned int> g_v59EligibleFrames{0};
+static std::atomic<int> g_v59LastPhase{0};
+
+static const char* V59PhaseName(int phase)
+{
+    switch (phase)
+    {
+        case 1: return "A_CURRENT";
+        case 2: return "B_PREVIOUS";
+        default: return "C_CURRENT";
+    }
+}
+
+static int V59PhaseForFrame(unsigned int frame)
+{
+    if (frame <= 240) return 1;
+    if (frame <= 480) return 2;
+    return 3;
+}
+
+static bool V59PresentSourceAB(
+        unsigned int swapSeq,
+        int swapTid,
+        GLint currentFbo,
+        const GLint viewport[4],
+        EGLint surfaceWidth,
+        EGLint surfaceHeight)
+{
+    const unsigned int frame =
+            g_v59EligibleFrames.fetch_add(1, std::memory_order_relaxed) + 1;
+    const int phase = V59PhaseForFrame(frame);
+    const int oldPhase = g_v59LastPhase.exchange(phase, std::memory_order_relaxed);
+
+    if (phase != oldPhase)
+    {
+        FLog("V59 FBO PHASE | eligible=%u phase=%d name=%s current=%d previous=%d",
+             frame, phase, V59PhaseName(phase),
+             (int)currentFbo, (int)(currentFbo - 1));
+    }
+
+    GLint sourceFbo = currentFbo;
+    if (phase == 2 && currentFbo > 1)
+        sourceFbo = currentFbo - 1;
+
+    GLint savedFbo = currentFbo;
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &savedFbo);
+    while (glGetError() != GL_NO_ERROR) {}
+
+    if (sourceFbo != savedFbo)
+    {
+        if (glBindFramebuffer_V29_Original)
+            glBindFramebuffer_V29_Original(GL_FRAMEBUFFER, (GLuint)sourceFbo);
+        else
+            glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)sourceFbo);
+    }
+
+    const GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+    const GLenum statusErr = glGetError();
+
+    bool ok = false;
+    if (status == GL_FRAMEBUFFER_COMPLETE && statusErr == GL_NO_ERROR)
+    {
+        ok = V31PresentOffscreenToDefault(
+                swapSeq, swapTid, sourceFbo, viewport,
+                surfaceWidth, surfaceHeight);
+    }
+    else
+    {
+        FLog("V59 FBO CANDIDATE INVALID | swap=%u phase=%s source=%d status=0x%x err=0x%x -> fallback=%d",
+             swapSeq, V59PhaseName(phase), (int)sourceFbo,
+             (unsigned int)status, (unsigned int)statusErr,
+             (int)currentFbo);
+
+        if (sourceFbo != currentFbo)
+        {
+            if (glBindFramebuffer_V29_Original)
+                glBindFramebuffer_V29_Original(GL_FRAMEBUFFER, (GLuint)currentFbo);
+            else
+                glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)currentFbo);
+
+            ok = V31PresentOffscreenToDefault(
+                    swapSeq, swapTid, currentFbo, viewport,
+                    surfaceWidth, surfaceHeight);
+        }
+    }
+
+    if (glBindFramebuffer_V29_Original)
+        glBindFramebuffer_V29_Original(GL_FRAMEBUFFER, (GLuint)savedFbo);
+    else
+        glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)savedFbo);
+
+    glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
+    const GLenum restoreErr = glGetError();
+
+    if (frame <= 12 || frame == 240 || frame == 241 ||
+        frame == 480 || frame == 481 || (frame % 240) == 0)
+    {
+        FLog("V59 FBO PRESENT | eligible=%u swap=%u tid=%d phase=%s source=%d current=%d ok=%d restoreErr=0x%x",
+             frame, swapSeq, swapTid, V59PhaseName(phase),
+             (int)sourceFbo, (int)currentFbo, ok ? 1 : 0,
+             (unsigned int)restoreErr);
+    }
+
+    return ok;
+}
+
 static EGLBoolean eglSwapBuffers_V29_hook(EGLDisplay dpy, EGLSurface surface)
 {
     if (!eglSwapBuffers_V29_Original)
@@ -1463,7 +1587,7 @@ static EGLBoolean eglSwapBuffers_V29_hook(EGLDisplay dpy, EGLSurface surface)
                      (unsigned int)v38FinishErr);
             }
 
-            V31PresentOffscreenToDefault(
+            V59PresentSourceAB(
                     current, swapTid, fbo, viewport, width, height);
 
             // V56: a copia terminou enquanto a thread EGL possui contexto
@@ -4389,7 +4513,7 @@ void InstallHooks()
         }
     }
 
-    FLog("V58 INSTALL: GTA_ORIGINAL_2D + SAMP_POSTLAYERS + SAFE_EGL_BLIT + V40_BASE");
+    FLog("V59 INSTALL: GTA_ORIGINAL_2D + SAMP_POSTLAYERS + FBO_SOURCE_AB + SAFE_EGL_BLIT");
 
     g_v29EglSwapStub = shadowhook_hook_sym_name(
             "libEGL.so",
