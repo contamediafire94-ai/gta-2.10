@@ -326,6 +326,12 @@ void ShowHud()
 static std::atomic<bool> g_v37TwoDInProgress{false};
 static std::atomic<unsigned int> g_v37TwoDCompleted{0};
 
+// V56: handshake de apresentacao. O produtor 3D/2D roda separado da thread
+// que possui o EGLSurface. Sem esperar o swap apresentar o 2D concluido,
+// o proximo passe 3D pode sobrescrever o FBO antes do blit, deixando
+// HUD/chat/radar/TextDraw invisiveis apesar de Draw() ser executado.
+static std::atomic<unsigned int> g_v56PresentedTwoD{0};
+
 // V38: real cross-thread exclusion. The producer owns this mutex while it
 // submits the complete 2D pass. The EGL/swap thread only performs the V31
 // copy when it can own the same mutex, which makes a mid-TextDraw/UI blit
@@ -534,6 +540,34 @@ void Render2dStuff()
     if (v21TraceTwoD)
         FLog("V38 2D MUTEX UNLOCK | seq=%u tid=%d",
              v21TwoDCurrent, (int)syscall(SYS_gettid));
+
+    // V56: nao deixa o produtor iniciar o proximo passe 3D imediatamente
+    // depois do 2D. Esperamos por um curto periodo ate a thread EGL copiar
+    // o FBO que acabou de receber HUD/chat/radar/TextDraw para o framebuffer
+    // apresentado. Timeout curto evita deadlock caso o app perca a surface.
+    if (pNetGame && pNetGame->GetGameState() == GAMESTATE_CONNECTED)
+    {
+        const unsigned int target2D = v21TwoDCurrent;
+        unsigned int ack2D =
+                g_v56PresentedTwoD.load(std::memory_order_acquire);
+
+        if (v21TraceTwoD)
+            FLog("V56 PRESENT WAIT BEGIN | seq=%u ack=%u",
+                 target2D, ack2D);
+
+        int waitedUs = 0;
+        while (ack2D < target2D && waitedUs < 20000)
+        {
+            usleep(250);
+            waitedUs += 250;
+            ack2D = g_v56PresentedTwoD.load(std::memory_order_acquire);
+        }
+
+        if (v21TraceTwoD || ack2D < target2D)
+            FLog("V56 PRESENT WAIT END | seq=%u ack=%u waitedUs=%d result=%s",
+                 target2D, ack2D, waitedUs,
+                 ack2D >= target2D ? "PRESENTED" : "TIMEOUT");
+    }
 }
 
 // =============================================================================
@@ -1434,6 +1468,21 @@ static EGLBoolean eglSwapBuffers_V29_hook(EGLDisplay dpy, EGLSurface surface)
 
             V31PresentOffscreenToDefault(
                     current, swapTid, fbo, viewport, width, height);
+
+            // V56: a copia terminou enquanto a thread EGL possui contexto
+            // e surface validos. Publica o numero do ultimo 2D realmente
+            // apresentado para liberar o produtor antes do proximo 3D.
+            if (v38Completed > 0)
+            {
+                g_v56PresentedTwoD.store(
+                        v38Completed, std::memory_order_release);
+
+                if (v38Completed <= 8 || (v38Completed % 120) == 0)
+                {
+                    FLog("V56 PRESENT ACK | swap=%u tid=%d completed=%u",
+                         current, swapTid, v38Completed);
+                }
+            }
 
             pthread_mutex_unlock(&g_v38TwoDPresentMutex);
         }
