@@ -582,6 +582,75 @@ static std::atomic<int> g_v29LastNonZeroFbo{-1};
 
 void (*Render2dStuff_V26_Original)();
 
+// =============================================================================
+// V62 - RW 2D PRIMITIVE PROBE
+//
+// V61 proved that the next 3D pass can be held until the EGL/present thread has
+// acknowledged the completed 2D frame, but HUD/chat/radar/TextDraws are still
+// absent.  This probe submits one very simple, untextured RenderWare 2D quad
+// through the SAME RwIm2DRenderIndexedPrimitive path used by the SA-MP ImGui
+// renderer.  It does not touch private RenderQueue methods or EGL state.
+//
+// Expected visual result during the first ~720 2D frames after entering game:
+// a large opaque magenta rectangle in the upper-left area.
+//   - if it APPEARS: the common RW 2D primitive path works, so state/HUD/UI data
+//     becomes the next target;
+//   - if it DOES NOT appear: the problem is below HUD/TextDraw/UI, in the RW 2D
+//     command/RenderQueue execution path or its render target.
+// =============================================================================
+static void V62SubmitRw2DProbe(unsigned int seq)
+{
+    if (seq > 720)
+        return;
+
+    const RwReal nearScreenZ = CSprite2d::NearScreenZ;
+    const RwReal recipNearClip = CSprite2d::RecipNearClip;
+
+    RwIm2DVertex v[4]{};
+
+    const float x0 = 42.0f;
+    const float y0 = 42.0f;
+    const float x1 = 360.0f;
+    const float y1 = 150.0f;
+
+    const float xs[4] = { x0, x1, x1, x0 };
+    const float ys[4] = { y0, y0, y1, y1 };
+
+    for (int i = 0; i < 4; ++i)
+    {
+        RwIm2DVertexSetScreenX(&v[i], xs[i]);
+        RwIm2DVertexSetScreenY(&v[i], ys[i]);
+        RwIm2DVertexSetScreenZ(&v[i], nearScreenZ);
+        RwIm2DVertexSetRecipCameraZ(&v[i], recipNearClip);
+        // Little-endian byte layout gives an opaque bright magenta probe.
+        v[i].emissiveColor = 0xFFFF00FFu;
+        RwIm2DVertexSetU(&v[i], 0.0f, recipNearClip);
+        RwIm2DVertexSetV(&v[i], 0.0f, recipNearClip);
+    }
+
+    RwImVertexIndex idx[6] = { 0, 1, 2, 0, 2, 3 };
+
+    // Self-contained untextured 2D state.  These calls enqueue through the
+    // normal RenderWare path just like the existing client UI.
+    RwRenderStateSet(rwRENDERSTATEZTESTENABLE, (void*)0);
+    RwRenderStateSet(rwRENDERSTATEZWRITEENABLE, (void*)0);
+    RwRenderStateSet(rwRENDERSTATEVERTEXALPHAENABLE, (void*)1);
+    RwRenderStateSet(rwRENDERSTATESRCBLEND, (void*)rwBLENDSRCALPHA);
+    RwRenderStateSet(rwRENDERSTATEDESTBLEND, (void*)rwBLENDINVSRCALPHA);
+    RwRenderStateSet(rwRENDERSTATEFOGENABLE, (void*)0);
+    RwRenderStateSet(rwRENDERSTATECULLMODE, (void*)rwCULLMODECULLNONE);
+    RwRenderStateSet(rwRENDERSTATETEXTURERASTER, (void*)0);
+
+    RwIm2DRenderIndexedPrimitive(rwPRIMTYPETRILIST, v, 4, idx, 6);
+
+    if (seq <= 16 || (seq % 120) == 0)
+    {
+        FLog("V62 RW2D PROBE SUBMIT | seq=%u tid=%d nearZ=%.6f recip=%.6f rect=%.0f,%.0f-%.0f,%.0f",
+             seq, V29GetTid(), (double)nearScreenZ, (double)recipNearClip,
+             (double)x0, (double)y0, (double)x1, (double)y1);
+    }
+}
+
 void Render2dStuff_V26_hook()
 {
     static unsigned int seq = 0;
@@ -627,6 +696,11 @@ void Render2dStuff_V26_hook()
         if (current <= 16)
             FLog("V58 UI RENDER | seq=%u ui=%p", current, pUI);
     }
+
+    // V62 diagnostic: submit a simple untextured RW 2D quad as the LAST 2D
+    // command of this producer pass.  V61 then prevents the next 3D pass from
+    // starting until the presentation thread acknowledges this completed 2D.
+    V62SubmitRw2DProbe(current);
 
     g_v37TwoDCompleted.store(current, std::memory_order_release);
     g_v37TwoDInProgress.store(false, std::memory_order_release);
@@ -4623,7 +4697,7 @@ void InstallHooks()
         }
     }
 
-    FLog("V61 INSTALL: GTA_ORIGINAL_2D + SAMP_POSTLAYERS + NEXT3D_PRESENT_GATE + SAFE_EGL_BLIT");
+    FLog("V62 INSTALL: V61_NEXT3D_GATE + RW2D_PRIMITIVE_PROBE + SAFE_EGL_BLIT");
 
     g_v29EglSwapStub = shadowhook_hook_sym_name(
             "libEGL.so",
