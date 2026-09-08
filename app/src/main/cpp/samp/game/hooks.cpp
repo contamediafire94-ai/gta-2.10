@@ -583,7 +583,7 @@ static std::atomic<int> g_v29LastNonZeroFbo{-1};
 void (*Render2dStuff_V26_Original)();
 
 // =============================================================================
-// V62 - RW 2D PRIMITIVE PROBE
+// V63 - RW 2D PERSISTENT PRIMITIVE PROBE
 //
 // V61 proved that the next 3D pass can be held until the EGL/present thread has
 // acknowledged the completed 2D frame, but HUD/chat/radar/TextDraws are still
@@ -598,40 +598,54 @@ void (*Render2dStuff_V26_Original)();
 //   - if it DOES NOT appear: the problem is below HUD/TextDraw/UI, in the RW 2D
 //     command/RenderQueue execution path or its render target.
 // =============================================================================
-static void V62SubmitRw2DProbe(unsigned int seq)
+static void V63SubmitRw2DProbe(unsigned int seq)
 {
-    if (seq > 720)
+    // Keep the test bounded and give every submitted frame its OWN persistent
+    // vertex storage.  On GTA SA Android RwIm2DRenderIndexedPrimitive may queue
+    // work for the graphics thread; stack-local vertices can therefore be dead
+    // before the queued command consumes them.
+    if (seq == 0 || seq > 720)
         return;
+
+    static RwIm2DVertex s_vertices[721][4]{};
+    static RwImVertexIndex s_indices[6] = { 0, 1, 2, 0, 2, 3 };
+    static bool s_ready[721]{};
 
     const RwReal nearScreenZ = CSprite2d::NearScreenZ;
     const RwReal recipNearClip = CSprite2d::RecipNearClip;
-
-    RwIm2DVertex v[4]{};
 
     const float x0 = 42.0f;
     const float y0 = 42.0f;
     const float x1 = 360.0f;
     const float y1 = 150.0f;
 
-    const float xs[4] = { x0, x1, x1, x0 };
-    const float ys[4] = { y0, y0, y1, y1 };
+    RwIm2DVertex* v = s_vertices[seq];
 
-    for (int i = 0; i < 4; ++i)
+    if (!s_ready[seq])
     {
-        RwIm2DVertexSetScreenX(&v[i], xs[i]);
-        RwIm2DVertexSetScreenY(&v[i], ys[i]);
-        RwIm2DVertexSetScreenZ(&v[i], nearScreenZ);
-        RwIm2DVertexSetRecipCameraZ(&v[i], recipNearClip);
-        // Little-endian byte layout gives an opaque bright magenta probe.
-        v[i].emissiveColor = 0xFFFF00FFu;
-        RwIm2DVertexSetU(&v[i], 0.0f, recipNearClip);
-        RwIm2DVertexSetV(&v[i], 0.0f, recipNearClip);
+        const float xs[4] = { x0, x1, x1, x0 };
+        const float ys[4] = { y0, y0, y1, y1 };
+
+        for (int i = 0; i < 4; ++i)
+        {
+            RwIm2DVertexSetScreenX(&v[i], xs[i]);
+            RwIm2DVertexSetScreenY(&v[i], ys[i]);
+            RwIm2DVertexSetScreenZ(&v[i], nearScreenZ);
+            RwIm2DVertexSetRecipCameraZ(&v[i], recipNearClip);
+
+            // ImGui's ImDrawVert::col uses the same packed RGBA convention on
+            // this client.  This is opaque bright magenta.
+            v[i].emissiveColor = 0xFFFF00FFu;
+
+            RwIm2DVertexSetU(&v[i], 0.0f, recipNearClip);
+            RwIm2DVertexSetV(&v[i], 0.0f, recipNearClip);
+        }
+
+        s_ready[seq] = true;
     }
 
-    RwImVertexIndex idx[6] = { 0, 1, 2, 0, 2, 3 };
-
-    // Self-contained untextured 2D state.  These calls enqueue through the
-    // normal RenderWare path just like the existing client UI.
+    // Match the render state used by ImGuiWrapper::setupRenderState as closely
+    // as possible, while keeping the probe untextured.
     RwRenderStateSet(rwRENDERSTATEZTESTENABLE, (void*)0);
     RwRenderStateSet(rwRENDERSTATEZWRITEENABLE, (void*)0);
     RwRenderStateSet(rwRENDERSTATEVERTEXALPHAENABLE, (void*)1);
@@ -639,14 +653,20 @@ static void V62SubmitRw2DProbe(unsigned int seq)
     RwRenderStateSet(rwRENDERSTATEDESTBLEND, (void*)rwBLENDINVSRCALPHA);
     RwRenderStateSet(rwRENDERSTATEFOGENABLE, (void*)0);
     RwRenderStateSet(rwRENDERSTATECULLMODE, (void*)rwCULLMODECULLNONE);
+    RwRenderStateSet(rwRENDERSTATEBORDERCOLOR, (void*)0);
+    RwRenderStateSet(rwRENDERSTATEALPHATESTFUNCTION, (void*)rwALPHATESTFUNCTIONGREATER);
+    RwRenderStateSet(rwRENDERSTATEALPHATESTFUNCTIONREF, (void*)2);
+    RwRenderStateSet(rwRENDERSTATETEXTUREFILTER, (void*)rwFILTERLINEAR);
+    RwRenderStateSet(rwRENDERSTATETEXTUREADDRESS, (void*)rwTEXTUREADDRESSCLAMP);
     RwRenderStateSet(rwRENDERSTATETEXTURERASTER, (void*)0);
 
-    RwIm2DRenderIndexedPrimitive(rwPRIMTYPETRILIST, v, 4, idx, 6);
+    RwIm2DRenderIndexedPrimitive(rwPRIMTYPETRILIST, v, 4, s_indices, 6);
 
     if (seq <= 16 || (seq % 120) == 0)
     {
-        FLog("V62 RW2D PROBE SUBMIT | seq=%u tid=%d nearZ=%.6f recip=%.6f rect=%.0f,%.0f-%.0f,%.0f",
-             seq, V29GetTid(), (double)nearScreenZ, (double)recipNearClip,
+        FLog("V63 RW2D PERSISTENT PROBE SUBMIT | seq=%u tid=%d v=%p idx=%p nearZ=%.6f recip=%.6f rect=%.0f,%.0f-%.0f,%.0f",
+             seq, V29GetTid(), (void*)v, (void*)s_indices,
+             (double)nearScreenZ, (double)recipNearClip,
              (double)x0, (double)y0, (double)x1, (double)y1);
     }
 }
@@ -697,10 +717,10 @@ void Render2dStuff_V26_hook()
             FLog("V58 UI RENDER | seq=%u ui=%p", current, pUI);
     }
 
-    // V62 diagnostic: submit a simple untextured RW 2D quad as the LAST 2D
+    // V63 diagnostic: submit a persistent untextured RW 2D quad as the LAST 2D
     // command of this producer pass.  V61 then prevents the next 3D pass from
     // starting until the presentation thread acknowledges this completed 2D.
-    V62SubmitRw2DProbe(current);
+    V63SubmitRw2DProbe(current);
 
     g_v37TwoDCompleted.store(current, std::memory_order_release);
     g_v37TwoDInProgress.store(false, std::memory_order_release);
@@ -4697,7 +4717,7 @@ void InstallHooks()
         }
     }
 
-    FLog("V62 INSTALL: V61_NEXT3D_GATE + RW2D_PRIMITIVE_PROBE + SAFE_EGL_BLIT");
+    FLog("V63 INSTALL: V61_NEXT3D_GATE + RW2D_PERSISTENT_PROBE + SAFE_EGL_BLIT");
 
     g_v29EglSwapStub = shadowhook_hook_sym_name(
             "libEGL.so",
