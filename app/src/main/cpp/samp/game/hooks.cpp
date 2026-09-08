@@ -3743,6 +3743,50 @@ bool RwResourcesFreeResEntry_hook(void* entry)
     return result;
 }
 
+// V52 - CINFO runtime write redirect.
+//
+// V50 intentionally treats the imported CINFO.BIN as missing so GTA rebuilds
+// the collision cache from the current DATA/IDE/COL set. After the whole map
+// is parsed, CColAccel::endCache calls CFileMgr::OpenFileForWriting on
+// MODELS\\CINFO.BIN. On Android 10+ the legacy external Android/data path is
+// not writable from this native path, which produced a null/invalid handle and
+// a SIGSEGV inside OS_FileWrite.
+//
+// Redirect only the WRITE side of CINFO to the app-private storage. Reading is
+// still bypassed by V50 in NvFOpen, so a stale cache is never consumed.
+uintptr_t (*CFileMgr_OpenFileForWriting_V52_Original)(const char* fileName);
+
+uintptr_t CFileMgr_OpenFileForWriting_V52_hook(const char* fileName)
+{
+    if (fileName)
+    {
+        const bool isCInfo =
+                !strcasecmp(fileName, "MODELS\\CINFO.BIN") ||
+                !strcasecmp(fileName, "MODELS/CINFO.BIN") ||
+                !strcasecmp(fileName, "CINFO.BIN");
+
+        if (isCInfo)
+        {
+            char privatePath[255]{};
+            snprintf(privatePath, sizeof(privatePath),
+                     "%sCINFO_RUNTIME.BIN", WIU_INTERNAL_ROOT);
+
+            FLog("V52 CINFO WRITE redirect | request=%s | path=%s",
+                 fileName, privatePath);
+
+            uintptr_t handle =
+                    CFileMgr_OpenFileForWriting_V52_Original(privatePath);
+
+            FLog("V52 CINFO WRITE handle | 0x%llx",
+                 (unsigned long long)handle);
+
+            return handle;
+        }
+    }
+
+    return CFileMgr_OpenFileForWriting_V52_Original(fileName);
+}
+
 static uint32_t dwRLEDecompressSourceSize = 0;
 
 size_t (*OS_FileRead)(OSFile a1, void *buffer, size_t numBytes);
@@ -4068,6 +4112,10 @@ void InstallSpecialHooks()
 
 //    CHook::InstallPLT(g_libGTASA + (VER_x32 ? 0x6701D4 : 0x840708), &RLEDecompress_hook, &RLEDecompress); // comment fix bug with widgets, cause hook was written by ChatGPT (not mine code)
 	CHook::InlineHook("_ZN22TextureDatabaseRuntime15LoadFullTextureEj", &LoadFullTexture_hook, &LoadFullTexture);
+
+    CHook::InlineHook("_ZN8CFileMgr18OpenFileForWritingEPKc",
+                      &CFileMgr_OpenFileForWriting_V52_hook,
+                      &CFileMgr_OpenFileForWriting_V52_Original);
 
     CHook::InlineHook("_Z11OS_FileReadPvS_i", &OS_FileRead_hook, &OS_FileRead);
 
