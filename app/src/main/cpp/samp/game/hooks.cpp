@@ -3444,8 +3444,22 @@ if(!strncmp(r1+12, "mainV1.scm", 10))
 
     if (!strncmp(r1, "DATA/WEAPON.DAT", 15))
     {
-        snprintf(path, sizeof(path), "%sSAMP_app/weapon.dat", WIU_INTERNAL_ROOT);
-        FLog("Loading weapon.dat..");
+        // V55 - o pacote atual nao possui SAMP_app/weapon.dat.
+        // O V47 ja resolveu DATA/WEAPON.DAT para data_app/weapon.dat;
+        // so usa a versao SAMP se ela realmente existir.
+        char sampWeaponPath[512];
+        snprintf(sampWeaponPath, sizeof(sampWeaponPath),
+                 "%sSAMP_app/weapon.dat", WIU_INTERNAL_ROOT);
+
+        if (access(sampWeaponPath, R_OK) == 0)
+        {
+            snprintf(path, sizeof(path), "%s", sampWeaponPath);
+            FLog("V55 WEAPON selected SAMP override | %s", path);
+        }
+        else
+        {
+            FLog("V55 WEAPON SAMP override missing | keeping DATA resolved path | %s", path);
+        }
     }
 
     // V54 - ANIM resolver robusto.
