@@ -40,8 +40,6 @@ CAudioStream* pAudioStream = nullptr;
 CJavaWrapper* pJavaWrapper = nullptr;
 CSettings* pSettings = nullptr;
 extern char g_launcherNickname[25];
-extern char g_launcherServerHost[128];
-extern unsigned short g_launcherServerPort;
 //CVoice* pVoice = nullptr;
 
 MaterialTextGenerator* pMaterialTextGenerator = nullptr;
@@ -49,15 +47,6 @@ MaterialTextGenerator* pMaterialTextGenerator = nullptr;
 bool bDebug = false;
 bool bGameInited = false;
 bool bNetworkInited = false;
-
-// V15 - fluxo inspirado na APK de referencia:
-// a rede NAO inicia por contagem fixa de frames.
-// Ela fica bloqueada ate a tela de loading do GTA avisar explicitamente
-// que terminou, via SAMP.nativeAllowNetworkInit().
-static bool g_networkInitAllowed = false;
-static bool g_networkWaitLogged = false;
-static bool g_networkAllowedLogged = false;
-static int g_networkProcessDelayFrames = 0;
 
 uintptr_t g_libGTASA = 0x00;
 uintptr_t g_libSAMP = 0x00;
@@ -255,10 +244,8 @@ void DoInitStuff() {
         pAudioStream = new CAudioStream();
         pAudioStream->Initialize();
 
-        // Mantem a tela do cliente por cima enquanto o GTA termina de inicializar.
-        // Assim o frontend/menu normal do GTA nao fica aparecendo no fundo.
-        pUI->splashscreen()->setVisible(true);
-        pUI->chat()->setVisible(false);
+        pUI->splashscreen()->setVisible(false);
+        pUI->chat()->setVisible(true);
         //pUI->buttonpanel()->setVisible(true);
 
         pGame->Initialize();
@@ -290,42 +277,13 @@ void DoInitStuff() {
         }
 
         bGameInited = true;
-        FLog("V15: game init finished; network is gated by loading-screen callback");
-        return;
     }
 
-    if (!bNetworkInited && !bDebug && !serverConnect) {
-
-        // V15:
-        // Igual ao padrao observado na APK de referencia: CNetGame so nasce
-        // depois que o loading do GTA libera explicitamente a rede.
-        if (!g_networkInitAllowed) {
-            if (!g_networkWaitLogged) {
-                FLog("V15: Network init waiting for loading screen");
-                g_networkWaitLogged = true;
-            }
-            return;
-        }
-
-        if (!g_networkAllowedLogged) {
-            FLog("V15: Network init allowed after loading screen");
-            g_networkAllowedLogged = true;
-        }
+    if (!bNetworkInited && !bDebug  && !serverConnect) {
 
         int serverid = pSettings->GetReadOnly().iServerID;
 
-        if (g_launcherServerHost[0] != '\0' && g_launcherServerPort != 0)
-        {
-            FLog("Launcher server: %s:%u", g_launcherServerHost, (unsigned int)g_launcherServerPort);
-
-            pNetGame = new CNetGame(
-                    g_launcherServerHost,
-                    g_launcherServerPort,
-                    pSettings->Get().szNickName,
-                    pSettings->Get().szPassword
-            );
-        }
-        else if (serverid == 0)
+        if (serverid == 0)
         {
             pNetGame = new CNetGame(SERVER_HOST_TEST, SERVER_PORT_TEST, pSettings->Get().szNickName, pSettings->Get().szPassword);
         }
@@ -347,13 +305,9 @@ void DoInitStuff() {
         }
 
         bNetworkInited = true;
-
-        // A conexao SA-MP ja foi criada: agora removemos a cobertura de carregamento.
-        pUI->splashscreen()->setVisible(false);
-        pUI->chat()->setVisible(true);
         pUI->chat()->addDebugMessage("Connected to server... {622cf5}ID: %d", serverid);
 
-        FLog("Direct SA-MP flow: frontend covered until CNetGame");
+
         FLog("DoInitStuff end");
     }
 }
@@ -387,25 +341,12 @@ void GameBackground()
 }
 */
 char g_launcherNickname[25] = {0};
-char g_launcherServerHost[128] = {0};
-unsigned short g_launcherServerPort = 0;
 extern "C" {
 	JNIEXPORT void JNICALL Java_com_samp_mobile_game_SAMP_initializeSAMP(JNIEnv *pEnv, jobject thiz)
   {
 		pJavaWrapper = new CJavaWrapper(pEnv, thiz);
 
 	}
-
-JNIEXPORT void JNICALL Java_com_samp_mobile_game_SAMP_nativeAllowNetworkInit(
-        JNIEnv *pEnv,
-        jobject thiz)
-{
-    if (!g_networkInitAllowed)
-    {
-        FLog("V15: Loading screen hidden, allowing network init");
-        g_networkInitAllowed = true;
-    }
-}
 
 JNIEXPORT void JNICALL Java_com_samp_mobile_game_SAMP_setLauncherNickname(
         JNIEnv *pEnv,
@@ -418,51 +359,33 @@ JNIEXPORT void JNICALL Java_com_samp_mobile_game_SAMP_setLauncherNickname(
 
     if (value != nullptr)
     {
+        // Guarda o nick recebido do launcher.
         snprintf(g_launcherNickname, sizeof(g_launcherNickname), "%s", value);
+
+        // Se o CSettings ja existir, atualiza o nick ativo imediatamente.
+        // Isso evita cair no nick padrao quando ReadSettingFile() rodou antes
+        // do setLauncherNickname() vindo do launcher.
+        if (pSettings)
+        {
+            snprintf(
+                pSettings->Get().szNickName,
+                sizeof(pSettings->Get().szNickName),
+                "%s",
+                g_launcherNickname
+            );
+
+            firebase::crashlytics::SetUserId(pSettings->Get().szNickName);
+            FLog("Launcher nickname applied to active SA-MP settings: %s",
+                 pSettings->Get().szNickName);
+        }
+        else
+        {
+            FLog("Launcher nickname stored before settings init: %s",
+                 g_launcherNickname);
+        }
+
         pEnv->ReleaseStringUTFChars(nickname, value);
     }
-}
-
-JNIEXPORT void JNICALL Java_com_samp_mobile_game_SAMP_setLauncherServer(
-        JNIEnv *pEnv,
-        jobject thiz,
-        jstring serverAddress)
-{
-    if (serverAddress == nullptr) return;
-
-    const char* value = pEnv->GetStringUTFChars(serverAddress, nullptr);
-    if (value == nullptr) return;
-
-    char address[160] = {0};
-    snprintf(address, sizeof(address), "%s", value);
-    pEnv->ReleaseStringUTFChars(serverAddress, value);
-
-    char* separator = strrchr(address, ':');
-
-    if (separator == nullptr)
-    {
-        FLog("Launcher server invalid: missing port");
-        return;
-    }
-
-    *separator = '\0';
-
-    const char* host = address;
-    const char* portText = separator + 1;
-    int port = atoi(portText);
-
-    if (host[0] == '\0' || port < 1 || port > 65535)
-    {
-        FLog("Launcher server invalid: %s:%s", host, portText);
-        return;
-    }
-
-    snprintf(g_launcherServerHost, sizeof(g_launcherServerHost), "%s", host);
-    g_launcherServerPort = (unsigned short)port;
-
-    FLog("Launcher server received: %s:%u",
-         g_launcherServerHost,
-         (unsigned int)g_launcherServerPort);
 }
 	JNIEXPORT void JNICALL Java_com_samp_mobile_game_SAMP_onInputEnd(JNIEnv *pEnv, jobject thiz, jbyteArray str)
 	{
@@ -507,16 +430,7 @@ void MainLoop()
 	}
 
 	if (pNetGame) {
-		// Give GTA a few more frames after CNetGame construction before Process().
-		if (g_networkProcessDelayFrames < 30) {
-			++g_networkProcessDelayFrames;
-
-			if (g_networkProcessDelayFrames == 1) {
-				FLog("CNetGame created; delaying first Process()");
-			}
-		} else {
-			pNetGame->Process();
-		}
+		pNetGame->Process();
 	}
 
 	if (pAudioStream) {
