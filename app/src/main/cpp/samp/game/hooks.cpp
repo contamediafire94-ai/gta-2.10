@@ -3851,6 +3851,7 @@ void CWaterLevel__RenderWater_hook()
 #include "COcclusion.h"
 #include "RealTimeShadowManager.h"
 #include "game/Widgets/WidgetGta.h"
+#include "Widgets/WidgetRadar.h"
 
 CFPSFix g_fps;
 
