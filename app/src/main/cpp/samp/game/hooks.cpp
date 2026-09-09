@@ -1256,10 +1256,13 @@ static void V63SubmitRw2DProbe(unsigned int seq)
     const RwReal nearScreenZ = CSprite2d::NearScreenZ;
     const RwReal recipNearClip = CSprite2d::RecipNearClip;
 
-    const float x0 = 42.0f;
-    const float y0 = 42.0f;
-    const float x1 = 360.0f;
-    const float y1 = 150.0f;
+    // Keep the proven RenderQueue marker command, but place it fully off-screen.
+    // Removing this command entirely also removed the per-frame sequence/base marker
+    // used by the confirmed blackout sink, which caused the CLEAN regression.
+    const float x0 = -500.0f;
+    const float y0 = -500.0f;
+    const float x1 = -182.0f;
+    const float y1 = -392.0f;
 
     RwIm2DVertex* v = s_vertices[seq];
 
@@ -1377,11 +1380,10 @@ void Render2dStuff_V26_hook()
             FLog("V58 UI RENDER | seq=%u ui=%p", current, pUI);
     }
 
-    // V63 diagnostic: submit a persistent untextured RW 2D quad as the LAST 2D
-    // command of this producer pass.  V61 then prevents the next 3D pass from
-    // starting until the presentation thread acknowledges this completed 2D.
-    // RENDERFIX CLEAN: diagnostic RW2D probe removed after confirmed fix.
-    // V63SubmitRw2DProbe(current);
+    // Keep the proven final RenderQueue marker command. Its geometry is fully
+    // off-screen, so nothing is visible, but it still updates the frame sequence
+    // and preserves the exact ordering used by the confirmed blackout sink.
+    V63SubmitRw2DProbe(current);
 
     g_v37TwoDCompleted.store(current, std::memory_order_release);
     g_v37TwoDInProgress.store(false, std::memory_order_release);
@@ -5635,7 +5637,7 @@ void InstallHooks()
                       &V64RQSwapBuffers_hook,
                       &V64RQSwapBuffers_Original);
 
-    FLog("RENDERFIX CLEAN INSTALL: FINAL_BLACKOUT_SINK + V65_PRECOMPOSE + V61_GATE");
+    FLog("RENDERFIX STABLE INSTALL: BLACKOUT_SINK + HIDDEN_SEQUENCE_MARKER + V65_PRECOMPOSE + V61_GATE");
 
     g_v29EglSwapStub = shadowhook_hook_sym_name(
             "libEGL.so",
