@@ -615,50 +615,6 @@ static std::atomic<int> g_v64LastRqDrawTid{-1};
 static std::atomic<int> g_v64LastRqDrawFbo{-1};
 static std::atomic<int> g_v64LastRqTargetFbo{-1};
 
-// =============================================================================
-// V65 - PRECOMPOSE WORLD BEFORE RENDERQUEUE 2D
-//
-// V64 proved the real ordering on the GraphicsThread:
-//   - scene/world commands execute in a non-zero FBO (for example FBO 16);
-//   - the RenderQueue then switches to FBO0 and executes many 2D draws there;
-//   - immediately before eglSwapBuffers the GTA binds the world FBO again;
-//   - our old V31 final blit copied world FBO -> FBO0 at that point, erasing
-//     the HUD/chat/TextDraw/UI that had JUST been rendered into FBO0.
-//
-// V65 fixes the order without calling private RenderQueue flush/process APIs:
-//   1) remember the latest non-zero world FBO + viewport;
-//   2) on the FIRST RenderQueue draw that reaches FBO0 for a 2D producer frame,
-//      copy world -> FBO0 BEFORE that draw executes;
-//   3) let GTA/SA-MP's queued 2D commands naturally draw over the world;
-//   4) at eglSwapBuffers, preserve the already-composed FBO0 instead of doing
-//      the old destructive final world blit.
-// =============================================================================
-static std::atomic<unsigned int> g_v65Producer2DSeq{0};
-static std::atomic<unsigned int> g_v65Precomposed2DSeq{0};
-static std::atomic<int> g_v65WorldFbo{-1};
-static std::atomic<int> g_v65WorldVpX{0};
-static std::atomic<int> g_v65WorldVpY{0};
-static std::atomic<int> g_v65WorldVpW{0};
-static std::atomic<int> g_v65WorldVpH{0};
-
-// V66 - redirect the engine's default-framebuffer 2D phase into a private
-// persistent FBO.  V65 proved that writing world/2D into FBO0 early is later
-// discarded by this RenderQueue path.  We therefore compose offscreen and
-// copy the finished frame to FBO0 only at the real EGL present.
-static GLuint g_v66ComposeFbo = 0;
-static GLuint g_v66ComposeTex = 0;
-static GLint g_v66ComposeW = 0;
-static GLint g_v66ComposeH = 0;
-static std::atomic<unsigned int> g_v66ComposeSeq{0};
-static std::atomic<unsigned int> g_v66RedirectCount{0};
-
-static bool V66RedirectDefaultTargetToCompose(unsigned int producerSeq);
-static bool V66PresentComposeToDefault(unsigned int swapSeq, int swapTid,
-                                       unsigned int completedSeq,
-                                       GLint restoreFbo,
-                                       EGLint surfaceWidth, EGLint surfaceHeight);
-static void V65ObserveAndMaybePrecompose(GLint currentFbo);
-
 static void (*V64RQDrawIndexed_Original)(char*&) = nullptr;
 static void (*V64RQDrawNonIndexed_Original)(char*&) = nullptr;
 static void (*V64RQTargetSelect_Original)(char*&) = nullptr;
@@ -690,6 +646,93 @@ static inline bool V64ShouldTraceConsumer(
     return (total % 1000u) == 0u;
 }
 
+
+static inline void V67ReadProbePixels(GLubyte out0[4], GLubyte out1[4], GLubyte out2[4])
+{
+    // All three sample points are inside the V63 magenta probe rectangle
+    // (42,42)-(360,150). If the probe ever reaches the active framebuffer,
+    // at least these pixels should stop being black.
+    glReadPixels(64, 64, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, out0);
+    glReadPixels(128, 96, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, out1);
+    glReadPixels(300, 100, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, out2);
+}
+
+static void V67TraceStateAfterDraw(
+        const char* kind,
+        unsigned int total,
+        unsigned int probeSeq,
+        unsigned int probeBase,
+        GLint beforeFbo)
+{
+    if (eglGetCurrentContext() == EGL_NO_CONTEXT ||
+        probeSeq == 0 || probeSeq > 2 ||
+        total <= probeBase || total > probeBase + 80)
+        return;
+
+    GLint afterFbo = -1;
+    GLint program = -1;
+    GLint viewport[4] = {0,0,0,0};
+    GLint scissor[4] = {0,0,0,0};
+    GLint activeTex = 0;
+    GLint tex2D = 0;
+    GLint arrayBuf = 0;
+    GLint elemBuf = 0;
+    GLboolean colorMask[4] = {GL_FALSE,GL_FALSE,GL_FALSE,GL_FALSE};
+    GLboolean depthMask = GL_FALSE;
+
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &afterFbo);
+    glGetIntegerv(GL_CURRENT_PROGRAM, &program);
+    glGetIntegerv(GL_VIEWPORT, viewport);
+    glGetIntegerv(GL_SCISSOR_BOX, scissor);
+    glGetIntegerv(GL_ACTIVE_TEXTURE, &activeTex);
+    glGetIntegerv(GL_TEXTURE_BINDING_2D, &tex2D);
+    glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &arrayBuf);
+    glGetIntegerv(GL_ELEMENT_ARRAY_BUFFER_BINDING, &elemBuf);
+    glGetBooleanv(GL_COLOR_WRITEMASK, colorMask);
+    glGetBooleanv(GL_DEPTH_WRITEMASK, &depthMask);
+
+    const GLboolean scissorEnabled = glIsEnabled(GL_SCISSOR_TEST);
+    const GLboolean blendEnabled = glIsEnabled(GL_BLEND);
+    const GLboolean depthEnabled = glIsEnabled(GL_DEPTH_TEST);
+    const GLboolean cullEnabled = glIsEnabled(GL_CULL_FACE);
+
+    GLubyte p0[4] = {};
+    GLubyte p1[4] = {};
+    GLubyte p2[4] = {};
+    GLenum readErr = GL_NO_ERROR;
+
+    // FBO0 is the target where V64 proved the queued 2D commands execute.
+    // Read only there to avoid disturbing the world render target.
+    if (afterFbo == 0)
+    {
+        while (glGetError() != GL_NO_ERROR) {}
+        V67ReadProbePixels(p0, p1, p2);
+        readErr = glGetError();
+    }
+
+    FLog("V67 RQ DRAW STATE | kind=%s total=%u probe=%u base=%u delta=%u tid=%d beforeFbo=%d afterFbo=%d prog=%d vp=%d,%d,%d,%d sc=%d box=%d,%d,%d,%d blend=%d depth=%d cull=%d colorMask=%d%d%d%d depthMask=%d activeTex=0x%x tex2D=%d array=%d elem=%d p0=%u,%u,%u,%u p1=%u,%u,%u,%u p2=%u,%u,%u,%u readErr=0x%x",
+         kind, total, probeSeq, probeBase,
+         total >= probeBase ? total - probeBase : 0u,
+         V29GetTid(), (int)beforeFbo, (int)afterFbo, (int)program,
+         viewport[0], viewport[1], viewport[2], viewport[3],
+         scissorEnabled ? 1 : 0,
+         scissor[0], scissor[1], scissor[2], scissor[3],
+         blendEnabled ? 1 : 0,
+         depthEnabled ? 1 : 0,
+         cullEnabled ? 1 : 0,
+         colorMask[0] ? 1 : 0,
+         colorMask[1] ? 1 : 0,
+         colorMask[2] ? 1 : 0,
+         colorMask[3] ? 1 : 0,
+         depthMask ? 1 : 0,
+         (unsigned int)activeTex, (int)tex2D,
+         (int)arrayBuf, (int)elemBuf,
+         p0[0], p0[1], p0[2], p0[3],
+         p1[0], p1[1], p1[2], p1[3],
+         p2[0], p2[1], p2[2], p2[3],
+         (unsigned int)readErr);
+}
+
 static void V64RQDrawIndexed_hook(char*& command)
 {
     const unsigned int indexed =
@@ -704,7 +747,6 @@ static void V64RQDrawIndexed_hook(char*& command)
 
     const int tid = V29GetTid();
     const GLint fbo = V64CurrentFboIfPossible();
-    V65ObserveAndMaybePrecompose(fbo);
     g_v64LastRqDrawTid.store(tid, std::memory_order_release);
     g_v64LastRqDrawFbo.store((int)fbo, std::memory_order_release);
 
@@ -718,6 +760,10 @@ static void V64RQDrawIndexed_hook(char*& command)
 
     if (V64RQDrawIndexed_Original)
         V64RQDrawIndexed_Original(command);
+
+    // V67: observe the *real GPU state after the Rockstar consumer executed
+    // this queued draw*. No queue flush/process/re-entry is performed.
+    V67TraceStateAfterDraw("I", total, probeSeq, probeBase, fbo);
 }
 
 static void V64RQDrawNonIndexed_hook(char*& command)
@@ -734,7 +780,6 @@ static void V64RQDrawNonIndexed_hook(char*& command)
 
     const int tid = V29GetTid();
     const GLint fbo = V64CurrentFboIfPossible();
-    V65ObserveAndMaybePrecompose(fbo);
     g_v64LastRqDrawTid.store(tid, std::memory_order_release);
     g_v64LastRqDrawFbo.store((int)fbo, std::memory_order_release);
 
@@ -748,6 +793,8 @@ static void V64RQDrawNonIndexed_hook(char*& command)
 
     if (V64RQDrawNonIndexed_Original)
         V64RQDrawNonIndexed_Original(command);
+
+    V67TraceStateAfterDraw("N", total, probeSeq, probeBase, fbo);
 }
 
 static void V64RQTargetSelect_hook(char*& command)
@@ -758,32 +805,17 @@ static void V64RQTargetSelect_hook(char*& command)
     if (V64RQTargetSelect_Original)
         V64RQTargetSelect_Original(command);
 
-    GLint fboAfterOriginal = V64CurrentFboIfPossible();
-    GLint effectiveFbo = fboAfterOriginal;
-
-    // V66: when the real RenderQueue selects its default target for 2D, move
-    // that phase to our persistent composition FBO.  The target command has
-    // already applied all native state/viewport changes; we only replace the
-    // framebuffer binding.
-    const unsigned int producerSeq =
-            g_v65Producer2DSeq.load(std::memory_order_acquire);
-    if (fboAfterOriginal == 0 && producerSeq > 0)
-    {
-        if (V66RedirectDefaultTargetToCompose(producerSeq))
-            effectiveFbo = V64CurrentFboIfPossible();
-    }
-
-    g_v64LastRqTargetFbo.store((int)effectiveFbo, std::memory_order_release);
+    const GLint fbo = V64CurrentFboIfPossible();
+    g_v64LastRqTargetFbo.store((int)fbo, std::memory_order_release);
 
     const unsigned int probeSeq =
             g_v64ProbeSeq.load(std::memory_order_acquire);
 
     if ((probeSeq > 0 && probeSeq <= 16 && n <= 160) || (n % 1000u) == 0u)
     {
-        FLog("V66 RQ TARGET EXEC | n=%u probe=%u producer=%u tid=%d ctx=%p originalFbo=%d effectiveFbo=%d",
-             n, probeSeq, producerSeq, V29GetTid(),
-             (void*)eglGetCurrentContext(),
-             (int)fboAfterOriginal, (int)effectiveFbo);
+        FLog("V64 RQ TARGET EXEC | n=%u probe=%u tid=%d ctx=%p fboAfter=%d",
+             n, probeSeq, V29GetTid(),
+             (void*)eglGetCurrentContext(), (int)fbo);
     }
 }
 
@@ -940,11 +972,6 @@ void Render2dStuff_V26_hook()
         FLog("V58 ORIGINAL2D BEGIN | seq=%u tid=%d ctx=%p draw=%p",
              current, V29GetTid(), (void*)ctx, (void*)draw);
     }
-
-    // V65: publish the producer frame before GTA/SA-MP enqueue their 2D work.
-    // The GraphicsThread uses this sequence to precompose the world exactly
-    // once, immediately before the first queued draw that reaches FBO0.
-    g_v65Producer2DSeq.store(current, std::memory_order_release);
 
     // Deixa o proprio GTASA montar HUD/radar/mensagens usando a ordem e os
     // render-targets nativos desta build.
@@ -1337,436 +1364,6 @@ typedef void (*V31BlitFramebufferFn)(
 static V31BlitFramebufferFn g_v31BlitFramebuffer = nullptr;
 static std::atomic<unsigned int> g_v31BlitAttempts{0};
 static std::atomic<unsigned int> g_v31BlitSuccess{0};
-
-
-
-static bool V66EnsureComposeTarget(GLint width, GLint height)
-{
-    if (width <= 8 || height <= 8)
-        return false;
-
-    if (g_v66ComposeFbo != 0 && g_v66ComposeTex != 0 &&
-        g_v66ComposeW == width && g_v66ComposeH == height)
-        return true;
-
-    GLint savedTex = 0;
-    GLint savedFbo = 0;
-    glGetIntegerv(GL_TEXTURE_BINDING_2D, &savedTex);
-    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &savedFbo);
-    while (glGetError() != GL_NO_ERROR) {}
-
-    if (g_v66ComposeFbo != 0)
-    {
-        GLuint old = g_v66ComposeFbo;
-        glDeleteFramebuffers(1, &old);
-        g_v66ComposeFbo = 0;
-    }
-    if (g_v66ComposeTex != 0)
-    {
-        GLuint old = g_v66ComposeTex;
-        glDeleteTextures(1, &old);
-        g_v66ComposeTex = 0;
-    }
-
-    glGenTextures(1, &g_v66ComposeTex);
-    glBindTexture(GL_TEXTURE_2D, g_v66ComposeTex);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA,
-                 width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
-
-    glGenFramebuffers(1, &g_v66ComposeFbo);
-    glBindFramebuffer(GL_FRAMEBUFFER, g_v66ComposeFbo);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-                           GL_TEXTURE_2D, g_v66ComposeTex, 0);
-
-    const GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
-    const GLenum err = glGetError();
-
-    glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)savedFbo);
-    glBindTexture(GL_TEXTURE_2D, (GLuint)savedTex);
-
-    if (status != GL_FRAMEBUFFER_COMPLETE || err != GL_NO_ERROR)
-    {
-        FLog("V66 COMPOSE CREATE FAIL | size=%dx%d fbo=%u tex=%u status=0x%x err=0x%x",
-             (int)width, (int)height,
-             (unsigned int)g_v66ComposeFbo,
-             (unsigned int)g_v66ComposeTex,
-             (unsigned int)status, (unsigned int)err);
-        return false;
-    }
-
-    g_v66ComposeW = width;
-    g_v66ComposeH = height;
-    g_v66ComposeSeq.store(0, std::memory_order_release);
-
-    FLog("V66 COMPOSE CREATE OK | size=%dx%d fbo=%u tex=%u",
-         (int)width, (int)height,
-         (unsigned int)g_v66ComposeFbo,
-         (unsigned int)g_v66ComposeTex);
-    return true;
-}
-
-static bool V66RedirectDefaultTargetToCompose(unsigned int producerSeq)
-{
-    if (eglGetCurrentContext() == EGL_NO_CONTEXT)
-        return false;
-
-    EGLDisplay dpy = eglGetCurrentDisplay();
-    EGLSurface surf = eglGetCurrentSurface(EGL_DRAW);
-    if (dpy == EGL_NO_DISPLAY || surf == EGL_NO_SURFACE)
-        return false;
-
-    EGLint dstW = 0, dstH = 0;
-    if (!eglQuerySurface(dpy, surf, EGL_WIDTH, &dstW) ||
-        !eglQuerySurface(dpy, surf, EGL_HEIGHT, &dstH) ||
-        dstW <= 8 || dstH <= 8)
-        return false;
-
-    if (!V66EnsureComposeTarget((GLint)dstW, (GLint)dstH))
-        return false;
-
-    if (!g_v31BlitFramebuffer)
-    {
-        g_v31BlitFramebuffer = reinterpret_cast<V31BlitFramebufferFn>(
-                eglGetProcAddress("glBlitFramebuffer"));
-        if (!g_v31BlitFramebuffer)
-            return false;
-    }
-
-    const unsigned int oldSeq =
-            g_v66ComposeSeq.load(std::memory_order_acquire);
-
-    GLint savedViewport[4] = {0,0,0,0};
-    GLint savedScissor[4] = {0,0,0,0};
-    const GLboolean scissorEnabled = glIsEnabled(GL_SCISSOR_TEST);
-    glGetIntegerv(GL_VIEWPORT, savedViewport);
-    glGetIntegerv(GL_SCISSOR_BOX, savedScissor);
-
-    // First default-target selection for this 2D frame: seed our private
-    // composition target with the completed world image.
-    if (oldSeq != producerSeq)
-    {
-        const GLint worldFbo =
-                (GLint)g_v65WorldFbo.load(std::memory_order_acquire);
-        const GLint x = (GLint)g_v65WorldVpX.load(std::memory_order_acquire);
-        const GLint y = (GLint)g_v65WorldVpY.load(std::memory_order_acquire);
-        const GLint w = (GLint)g_v65WorldVpW.load(std::memory_order_acquire);
-        const GLint h = (GLint)g_v65WorldVpH.load(std::memory_order_acquire);
-
-        if (worldFbo <= 0 || w <= 8 || h <= 8)
-            return false;
-
-        while (glGetError() != GL_NO_ERROR) {}
-        glBindFramebuffer(GL_READ_FRAMEBUFFER, (GLuint)worldFbo);
-        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, g_v66ComposeFbo);
-
-        const GLenum readStatus = glCheckFramebufferStatus(GL_READ_FRAMEBUFFER);
-        const GLenum drawStatus = glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER);
-
-        glDisable(GL_SCISSOR_TEST);
-        g_v31BlitFramebuffer(x, y, x + w, y + h,
-                             0, 0, dstW, dstH,
-                             GL_COLOR_BUFFER_BIT, GL_NEAREST);
-        const GLenum blitErr = glGetError();
-
-        // Keep the native viewport/scissor selected by the original target
-        // command, but bind our offscreen frame instead of FBO0.
-        glBindFramebuffer(GL_FRAMEBUFFER, g_v66ComposeFbo);
-        glViewport(savedViewport[0], savedViewport[1],
-                   savedViewport[2], savedViewport[3]);
-        if (scissorEnabled) glEnable(GL_SCISSOR_TEST);
-        else glDisable(GL_SCISSOR_TEST);
-        glScissor(savedScissor[0], savedScissor[1],
-                  savedScissor[2], savedScissor[3]);
-
-        if (readStatus != GL_FRAMEBUFFER_COMPLETE ||
-            drawStatus != GL_FRAMEBUFFER_COMPLETE ||
-            blitErr != GL_NO_ERROR)
-        {
-            FLog("V66 COMPOSE SEED FAIL | seq=%u world=%d compose=%u read=0x%x draw=0x%x err=0x%x",
-                 producerSeq, (int)worldFbo,
-                 (unsigned int)g_v66ComposeFbo,
-                 (unsigned int)readStatus,
-                 (unsigned int)drawStatus,
-                 (unsigned int)blitErr);
-            return false;
-        }
-
-        g_v66ComposeSeq.store(producerSeq, std::memory_order_release);
-
-        if (producerSeq <= 16 || (producerSeq % 120u) == 0u)
-        {
-            FLog("V66 COMPOSE SEED+REDIRECT | seq=%u tid=%d world=%d worldVp=%d,%d %dx%d compose=%u size=%dx%d viewport=%d,%d %dx%d",
-                 producerSeq, V29GetTid(), (int)worldFbo,
-                 (int)x, (int)y, (int)w, (int)h,
-                 (unsigned int)g_v66ComposeFbo,
-                 (int)dstW, (int)dstH,
-                 savedViewport[0], savedViewport[1],
-                 savedViewport[2], savedViewport[3]);
-        }
-    }
-    else
-    {
-        glBindFramebuffer(GL_FRAMEBUFFER, g_v66ComposeFbo);
-        glViewport(savedViewport[0], savedViewport[1],
-                   savedViewport[2], savedViewport[3]);
-        if (scissorEnabled) glEnable(GL_SCISSOR_TEST);
-        else glDisable(GL_SCISSOR_TEST);
-        glScissor(savedScissor[0], savedScissor[1],
-                  savedScissor[2], savedScissor[3]);
-    }
-
-    g_v66RedirectCount.fetch_add(1, std::memory_order_relaxed);
-    return true;
-}
-
-static bool V66PresentComposeToDefault(unsigned int swapSeq, int swapTid,
-                                       unsigned int completedSeq,
-                                       GLint restoreFbo,
-                                       EGLint surfaceWidth, EGLint surfaceHeight)
-{
-    if (completedSeq == 0 ||
-        g_v66ComposeSeq.load(std::memory_order_acquire) != completedSeq ||
-        g_v66ComposeFbo == 0 || g_v66ComposeW <= 8 || g_v66ComposeH <= 8 ||
-        !g_v31BlitFramebuffer)
-        return false;
-
-    GLint savedRead = restoreFbo;
-    GLint savedDraw = restoreFbo;
-    GLint savedViewport[4] = {0,0,0,0};
-    GLint savedScissor[4] = {0,0,0,0};
-    const GLboolean scissorEnabled = glIsEnabled(GL_SCISSOR_TEST);
-
-    glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &savedRead);
-    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &savedDraw);
-    glGetIntegerv(GL_VIEWPORT, savedViewport);
-    glGetIntegerv(GL_SCISSOR_BOX, savedScissor);
-    while (glGetError() != GL_NO_ERROR) {}
-
-    glBindFramebuffer(GL_READ_FRAMEBUFFER, g_v66ComposeFbo);
-    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
-    const GLenum readStatus = glCheckFramebufferStatus(GL_READ_FRAMEBUFFER);
-    const GLenum drawStatus = glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER);
-
-    glDisable(GL_SCISSOR_TEST);
-    g_v31BlitFramebuffer(0, 0, g_v66ComposeW, g_v66ComposeH,
-                         0, 0, surfaceWidth, surfaceHeight,
-                         GL_COLOR_BUFFER_BIT, GL_NEAREST);
-    const GLenum err = glGetError();
-
-    // Sample FBO0 after the composed copy for diagnosis.
-    GLubyte px[4] = {};
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    glReadPixels(surfaceWidth / 2, surfaceHeight / 2, 1, 1,
-                 GL_RGBA, GL_UNSIGNED_BYTE, px);
-    const GLenum readErr = glGetError();
-
-    glBindFramebuffer(GL_READ_FRAMEBUFFER, (GLuint)savedRead);
-    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, (GLuint)savedDraw);
-    glViewport(savedViewport[0], savedViewport[1],
-               savedViewport[2], savedViewport[3]);
-    if (scissorEnabled) glEnable(GL_SCISSOR_TEST);
-    else glDisable(GL_SCISSOR_TEST);
-    glScissor(savedScissor[0], savedScissor[1],
-              savedScissor[2], savedScissor[3]);
-
-    const bool ok = (readStatus == GL_FRAMEBUFFER_COMPLETE &&
-                     drawStatus == GL_FRAMEBUFFER_COMPLETE &&
-                     err == GL_NO_ERROR);
-
-    if (completedSeq <= 16 || (completedSeq % 120u) == 0u)
-    {
-        FLog("V66 PRESENT COMPOSED | swap=%u tid=%d seq=%u compose=%u size=%dx%d dst=%dx%d read=0x%x draw=0x%x err=0x%x center=%u,%u,%u,%u readErr=0x%x ok=%d redirects=%u",
-             swapSeq, swapTid, completedSeq,
-             (unsigned int)g_v66ComposeFbo,
-             (int)g_v66ComposeW, (int)g_v66ComposeH,
-             (int)surfaceWidth, (int)surfaceHeight,
-             (unsigned int)readStatus, (unsigned int)drawStatus,
-             (unsigned int)err,
-             px[0], px[1], px[2], px[3],
-             (unsigned int)readErr, ok ? 1 : 0,
-             g_v66RedirectCount.load(std::memory_order_relaxed));
-    }
-
-    return ok;
-}
-
-static void V65ObserveAndMaybePrecompose(GLint currentFbo)
-{
-    if (eglGetCurrentContext() == EGL_NO_CONTEXT)
-        return;
-
-    // V66 composition target is not a world target.  Never let the legacy
-    // V65 observer replace the remembered scene FBO with our private FBO.
-    if (g_v66ComposeFbo != 0 && currentFbo == (GLint)g_v66ComposeFbo)
-        return;
-
-    // Any non-zero target observed by the real RQ consumer is a candidate for
-    // the offscreen world target. Keep the latest valid viewport with it.
-    if (currentFbo > 0)
-    {
-        GLint vp[4] = {0, 0, 0, 0};
-        glGetIntegerv(GL_VIEWPORT, vp);
-        if (vp[2] > 8 && vp[3] > 8)
-        {
-            g_v65WorldFbo.store((int)currentFbo, std::memory_order_release);
-            g_v65WorldVpX.store((int)vp[0], std::memory_order_release);
-            g_v65WorldVpY.store((int)vp[1], std::memory_order_release);
-            g_v65WorldVpW.store((int)vp[2], std::memory_order_release);
-            g_v65WorldVpH.store((int)vp[3], std::memory_order_release);
-        }
-        return;
-    }
-
-    // Only the first draw after RQ has switched to the default framebuffer
-    // needs the world precomposition. Every following FBO0 command is allowed
-    // to draw naturally over that copied world image.
-    if (currentFbo != 0)
-        return;
-
-    const unsigned int producerSeq =
-            g_v65Producer2DSeq.load(std::memory_order_acquire);
-    if (producerSeq == 0)
-        return;
-
-    if (g_v65Precomposed2DSeq.load(std::memory_order_acquire) == producerSeq)
-        return;
-
-    const GLint sourceFbo =
-            (GLint)g_v65WorldFbo.load(std::memory_order_acquire);
-    const GLint srcX =
-            (GLint)g_v65WorldVpX.load(std::memory_order_acquire);
-    const GLint srcY =
-            (GLint)g_v65WorldVpY.load(std::memory_order_acquire);
-    const GLint srcW =
-            (GLint)g_v65WorldVpW.load(std::memory_order_acquire);
-    const GLint srcH =
-            (GLint)g_v65WorldVpH.load(std::memory_order_acquire);
-
-    if (sourceFbo <= 0 || srcW <= 8 || srcH <= 8)
-        return;
-
-    EGLSurface drawSurface = eglGetCurrentSurface(EGL_DRAW);
-    if (drawSurface == EGL_NO_SURFACE)
-        return;
-
-    EGLDisplay dpy = eglGetCurrentDisplay();
-    if (dpy == EGL_NO_DISPLAY)
-        return;
-
-    EGLint dstW = 0;
-    EGLint dstH = 0;
-    if (!eglQuerySurface(dpy, drawSurface, EGL_WIDTH, &dstW) ||
-        !eglQuerySurface(dpy, drawSurface, EGL_HEIGHT, &dstH) ||
-        dstW <= 8 || dstH <= 8)
-        return;
-
-    if (!g_v31BlitFramebuffer)
-    {
-        g_v31BlitFramebuffer =
-                reinterpret_cast<V31BlitFramebufferFn>(
-                        eglGetProcAddress("glBlitFramebuffer"));
-        if (!g_v31BlitFramebuffer)
-        {
-            static std::atomic<unsigned int> noProcLogs{0};
-            if (noProcLogs.fetch_add(1, std::memory_order_relaxed) < 4)
-            {
-                FLog("V65 PRECOMPOSE SKIP | seq=%u reason=no_glBlitFramebuffer",
-                     producerSeq);
-            }
-            return;
-        }
-    }
-
-    GLint savedReadFbo = 0;
-    GLint savedDrawFbo = 0;
-    GLint savedViewport[4] = {0, 0, 0, 0};
-    GLint savedScissorBox[4] = {0, 0, 0, 0};
-    const GLboolean savedScissor = glIsEnabled(GL_SCISSOR_TEST);
-
-    while (glGetError() != GL_NO_ERROR) {}
-    glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &savedReadFbo);
-    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &savedDrawFbo);
-    glGetIntegerv(GL_VIEWPORT, savedViewport);
-    glGetIntegerv(GL_SCISSOR_BOX, savedScissorBox);
-    GLenum queryErr = glGetError();
-
-    if (queryErr != GL_NO_ERROR)
-    {
-        // We are entering from an FBO0 draw handler, so 0 is the safest
-        // fallback binding if split read/draw queries are unsupported.
-        savedReadFbo = 0;
-        savedDrawFbo = 0;
-    }
-
-    // Use the public GL API on the GraphicsThread and restore every modified
-    // state before the original RQ draw handler executes.
-    glBindFramebuffer(GL_READ_FRAMEBUFFER, (GLuint)sourceFbo);
-    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
-
-    const GLenum readStatus = glCheckFramebufferStatus(GL_READ_FRAMEBUFFER);
-    const GLenum drawStatus = glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER);
-    const GLenum statusErr = glGetError();
-
-    bool ok = false;
-    GLenum blitErr = GL_NO_ERROR;
-
-    if (readStatus == GL_FRAMEBUFFER_COMPLETE &&
-        drawStatus == GL_FRAMEBUFFER_COMPLETE &&
-        statusErr == GL_NO_ERROR)
-    {
-        glDisable(GL_SCISSOR_TEST);
-
-        g_v31BlitFramebuffer(
-                srcX, srcY, srcX + srcW, srcY + srcH,
-                0, 0, dstW, dstH,
-                GL_COLOR_BUFFER_BIT, GL_NEAREST);
-
-        blitErr = glGetError();
-        ok = (blitErr == GL_NO_ERROR);
-    }
-
-    glBindFramebuffer(GL_READ_FRAMEBUFFER, (GLuint)savedReadFbo);
-    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, (GLuint)savedDrawFbo);
-    glViewport(savedViewport[0], savedViewport[1],
-               savedViewport[2], savedViewport[3]);
-
-    if (savedScissor) glEnable(GL_SCISSOR_TEST);
-    else glDisable(GL_SCISSOR_TEST);
-
-    glScissor(savedScissorBox[0], savedScissorBox[1],
-              savedScissorBox[2], savedScissorBox[3]);
-
-    const GLenum restoreErr = glGetError();
-
-    if (ok)
-    {
-        g_v65Precomposed2DSeq.store(
-                producerSeq, std::memory_order_release);
-
-        if (producerSeq <= 16 || (producerSeq % 120u) == 0u)
-        {
-            FLog("V65 PRECOMPOSE WORLD->FBO0 | seq=%u tid=%d srcFbo=%d src=%d,%d %dx%d dst=%dx%d read=0x%x draw=0x%x blitErr=0x%x restoreErr=0x%x",
-                 producerSeq, V29GetTid(), (int)sourceFbo,
-                 (int)srcX, (int)srcY, (int)srcW, (int)srcH,
-                 (int)dstW, (int)dstH,
-                 (unsigned int)readStatus, (unsigned int)drawStatus,
-                 (unsigned int)blitErr, (unsigned int)restoreErr);
-        }
-    }
-    else if (producerSeq <= 8)
-    {
-        FLog("V65 PRECOMPOSE FAIL | seq=%u tid=%d srcFbo=%d src=%dx%d dst=%dx%d read=0x%x draw=0x%x statusErr=0x%x blitErr=0x%x restoreErr=0x%x",
-             producerSeq, V29GetTid(), (int)sourceFbo,
-             (int)srcW, (int)srcH, (int)dstW, (int)dstH,
-             (unsigned int)readStatus, (unsigned int)drawStatus,
-             (unsigned int)statusErr, (unsigned int)blitErr,
-             (unsigned int)restoreErr);
-    }
-}
 
 // V34: controlled A/B test for the final scene blit.
 // A: keep the proven V31 FBO2 -> FBO0 blit for 360 valid offscreen frames.
@@ -2515,27 +2112,8 @@ static EGLBoolean eglSwapBuffers_V29_hook(EGLDisplay dpy, EGLSurface surface)
                      (unsigned int)v38FinishErr);
             }
 
-            // V66: the whole frame (world + queued GTA/SA-MP 2D) is composed
-            // in a private FBO.  Copy that finished image to the real default
-            // framebuffer only at the actual EGL present.
-            const bool v66Presented = V66PresentComposeToDefault(
-                    current, swapTid, v38Completed, fbo, width, height);
-
-            if (!v66Presented)
-            {
-                // Startup/edge fallback: keep the previously proven world-only
-                // path so a missing composition frame never kills 3D output.
-                V61PresentCurrentWorld(
-                        current, swapTid, fbo, viewport, width, height);
-
-                if (v38Completed <= 8)
-                {
-                    FLog("V66 PRESENT FALLBACK WORLD | swap=%u tid=%d completed=%u composeSeq=%u composeFbo=%u source=%d",
-                         current, swapTid, v38Completed,
-                         g_v66ComposeSeq.load(std::memory_order_acquire),
-                         (unsigned int)g_v66ComposeFbo, (int)fbo);
-                }
-            }
+            V61PresentCurrentWorld(
+                    current, swapTid, fbo, viewport, width, height);
 
             // V56: a copia terminou enquanto a thread EGL possui contexto
             // e surface validos. Publica o numero do ultimo 2D realmente
@@ -5482,7 +5060,7 @@ void InstallHooks()
                       &V64RQSwapBuffers_hook,
                       &V64RQSwapBuffers_Original);
 
-    FLog("V66 INSTALL: OFFSCREEN_WORLD_2D_COMPOSE + TARGET0_REDIRECT + FINAL_COMPOSE_BLIT + V64_TRACE + V61_GATE");
+    FLog("V67 INSTALL: V64_STABLE_WORLD + RQ_2D_STATE_TRACE + PROBE_PIXEL_TRACE + V61_GATE");
 
     g_v29EglSwapStub = shadowhook_hook_sym_name(
             "libEGL.so",
