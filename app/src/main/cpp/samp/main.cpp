@@ -351,6 +351,19 @@ void DoInitStuff() {
         // A conexao SA-MP ja foi criada: agora removemos a cobertura de carregamento.
         pUI->splashscreen()->setVisible(false);
         pUI->chat()->setVisible(true);
+
+        // UI/HUD restore: o ButtonPanel nasce oculto no UI::initialize() e nesta
+        // base o setVisible(true) estava comentado. Reativamos o painel apenas
+        // quando o CNetGame ja existe, para nao aparecer durante o loading.
+        if (pUI->buttonpanel())
+            pUI->buttonpanel()->setVisible(true);
+
+        // No fluxo normal (!bDebug) o HUD nunca era explicitamente reativado.
+        // Isso mantinha radar/minimapa e HUD nativo desligados.
+        if (pGame)
+            pGame->DisplayHUD(true);
+
+        FLog("UI RESTORE: buttonpanel=1 hud=1");
         pUI->chat()->addDebugMessage("Connected to server... {622cf5}ID: %d", serverid);
 
         FLog("Direct SA-MP flow: frontend covered until CNetGame");
