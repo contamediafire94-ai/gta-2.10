@@ -1380,7 +1380,8 @@ void Render2dStuff_V26_hook()
     // V63 diagnostic: submit a persistent untextured RW 2D quad as the LAST 2D
     // command of this producer pass.  V61 then prevents the next 3D pass from
     // starting until the presentation thread acknowledges this completed 2D.
-    V63SubmitRw2DProbe(current);
+    // RENDERFIX CLEAN: diagnostic RW2D probe removed after confirmed fix.
+    // V63SubmitRw2DProbe(current);
 
     g_v37TwoDCompleted.store(current, std::memory_order_release);
     g_v37TwoDInProgress.store(false, std::memory_order_release);
@@ -5634,7 +5635,7 @@ void InstallHooks()
                       &V64RQSwapBuffers_hook,
                       &V64RQSwapBuffers_Original);
 
-    FLog("RENDERFIX INSTALL: CONFIRMED_FINAL_BLACKOUT_SINK + V65_PRECOMPOSE + V61_GATE");
+    FLog("RENDERFIX CLEAN INSTALL: FINAL_BLACKOUT_SINK + V65_PRECOMPOSE + V61_GATE");
 
     g_v29EglSwapStub = shadowhook_hook_sym_name(
             "libEGL.so",
