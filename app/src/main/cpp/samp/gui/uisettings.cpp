@@ -14,7 +14,7 @@ ImVec2 UISettings::m_baseSize = ImVec2(640.0f, 480.0f);
 ImVec2 UISettings::m_scaleFactor = ImVec2(1.0f, 1.0f);
 
 /* font */
-float UISettings::m_fontSize = 30.0f;//26.0f;//24.0f;
+float UISettings::m_fontSize = 24.0f; // WIU: compact UI/chat (was 30.0f)
 float UISettings::m_outlineSize = 2.0f;
 
 /* ////////////////// pos & size ////////////////// */
@@ -34,7 +34,7 @@ ImVec2 UISettings::m_splashScreenPBarPos = ImVec2(100.0f, 460.0f);//ImVec2(100.0
 ImVec2 UISettings::m_splashScreenPBarSize = ImVec2(440.0f, 10.0f);
 
 /* chat */
-int UISettings::m_chatDispMesssages = 9;
+int UISettings::m_chatDispMesssages = 6; // WIU: fewer visible chat lines
 int UISettings::m_chatMaxMessages = 30;
 ImVec2 UISettings::m_chatPos = ImVec2(100.0f, 10.0f);
 ImVec2 UISettings::m_chatSize = ImVec2(400.0f, 0.0f);
@@ -82,7 +82,10 @@ void UISettings::Initialize(const ImVec2& display_size)
 	m_scaleFactor = display_size / m_baseSize;
 
 	/* chat line count */
+	// Keep the chat compact even when settings.ini is unavailable and defaults are used.
 	m_chatDispMesssages = pSettings->Get().iChatMaxMessages;
+	if (m_chatDispMesssages < 4) m_chatDispMesssages = 4;
+	if (m_chatDispMesssages > 6) m_chatDispMesssages = 6;
 
 	/* font */
 	m_fontSize *= m_scaleFactor.y;
