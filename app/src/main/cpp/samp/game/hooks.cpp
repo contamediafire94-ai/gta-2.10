@@ -36,7 +36,6 @@
 #include "FileLoader.h"
 #include "Renderer.h"
 #include "CrossHair.h"
-#include "Widgets/WidgetRadar.h"
 #include "World.h"
 #include "Core/Matrix.h"
 
@@ -5392,8 +5391,7 @@ void InjectHooks()
     TextureDatabaseEntry::InjectHooks();
     TextureDatabaseRuntime::InjectHooks();
     CCustomBuildingDNPipeline::InjectHooks();
-    CWidgetRadar::InjectHooks();
-    FLog("RADAR STEP1: CWidgetRadar hooks enabled");
+    //CWidgetRadar::InjectHooks();
 
     //CRealTimeShadowManager::InjectHooks();
     CHook::Write(g_libGTASA+(VER_x32 ? 0xA41140 : 0xCE3EE8), &COcclusion::aOccluders);
@@ -5574,6 +5572,12 @@ void InstallHooks()
                       &RenderEffects_V30_hook,
                       &RenderEffects_V30_Original);
     FLog("V31 EFFECTS HOOK | mode=CUSTOM_FIXED original=%p", (void*)RenderEffects_V30_Original);
+
+    // RADAR STEP2: Install the radar widget hooks from the active hook path.
+    // The old CWidgetRadar::InjectHooks() line lived inside InstallSpecialHooks/InjectHooks,
+    // which is not executed in the current startup path. Keep this test isolated to radar.
+    CWidgetRadar::InjectHooks();
+    FLog("RADAR STEP2 INSTALL: CWidgetRadar hooks enabled from InstallHooks");
     CHook::InlineHook("_Z14AND_TouchEventiiii", &AND_TouchEvent_hook, &AND_TouchEvent);
 	
     CHook::Redirect("_ZN11CHudColours12GetIntColourEh", &CHudColours__GetIntColour); // dangerous
