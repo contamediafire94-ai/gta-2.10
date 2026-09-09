@@ -1242,16 +1242,17 @@ static void V64RQSwapBuffers_hook(char*& command)
 // =============================================================================
 static void V63SubmitRw2DProbe(unsigned int seq)
 {
-    // Keep the test bounded and give every submitted frame its OWN persistent
-    // vertex storage.  On GTA SA Android RwIm2DRenderIndexedPrimitive may queue
-    // work for the graphics thread; stack-local vertices can therefore be dead
-    // before the queued command consumes them.
-    if (seq == 0 || seq > 720)
+    // Permanent hidden RenderQueue marker.  The previous STABLE build kept the
+    // old diagnostic 720-frame cap; when seq passed 720 the marker stopped,
+    // g_v64ProbeSeq froze, and the confirmed blackout sink stopped arming.
+    // The geometry is identical every frame, so one static persistent vertex
+    // buffer is enough and can safely live for the whole session.
+    if (seq == 0)
         return;
 
-    static RwIm2DVertex s_vertices[721][4]{};
+    static RwIm2DVertex s_vertices[4]{};
     static RwImVertexIndex s_indices[6] = { 0, 1, 2, 0, 2, 3 };
-    static bool s_ready[721]{};
+    static bool s_ready = false;
 
     const RwReal nearScreenZ = CSprite2d::NearScreenZ;
     const RwReal recipNearClip = CSprite2d::RecipNearClip;
@@ -1264,9 +1265,9 @@ static void V63SubmitRw2DProbe(unsigned int seq)
     const float x1 = -182.0f;
     const float y1 = -392.0f;
 
-    RwIm2DVertex* v = s_vertices[seq];
+    RwIm2DVertex* v = s_vertices;
 
-    if (!s_ready[seq])
+    if (!s_ready)
     {
         const float xs[4] = { x0, x1, x1, x0 };
         const float ys[4] = { y0, y0, y1, y1 };
@@ -1286,7 +1287,7 @@ static void V63SubmitRw2DProbe(unsigned int seq)
             RwIm2DVertexSetV(&v[i], 0.0f, recipNearClip);
         }
 
-        s_ready[seq] = true;
+        s_ready = true;
     }
 
     // Match the render state used by ImGuiWrapper::setupRenderState as closely
@@ -1380,9 +1381,9 @@ void Render2dStuff_V26_hook()
             FLog("V58 UI RENDER | seq=%u ui=%p", current, pUI);
     }
 
-    // Keep the proven final RenderQueue marker command. Its geometry is fully
-    // off-screen, so nothing is visible, but it still updates the frame sequence
-    // and preserves the exact ordering used by the confirmed blackout sink.
+    // Keep the proven final RenderQueue marker command permanently. Its geometry
+    // is fully off-screen, so nothing is visible, but it updates the frame
+    // sequence for the confirmed blackout sink for the entire game session.
     V63SubmitRw2DProbe(current);
 
     g_v37TwoDCompleted.store(current, std::memory_order_release);
@@ -5637,7 +5638,7 @@ void InstallHooks()
                       &V64RQSwapBuffers_hook,
                       &V64RQSwapBuffers_Original);
 
-    FLog("RENDERFIX STABLE INSTALL: BLACKOUT_SINK + HIDDEN_SEQUENCE_MARKER + V65_PRECOMPOSE + V61_GATE");
+    FLog("RENDERFIX STABLE2 INSTALL: BLACKOUT_SINK + PERMANENT_HIDDEN_MARKER + V65_PRECOMPOSE + V61_GATE");
 
     g_v29EglSwapStub = shadowhook_hook_sym_name(
             "libEGL.so",
