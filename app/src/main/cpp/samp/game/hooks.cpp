@@ -644,18 +644,20 @@ static std::atomic<int> g_v65WorldVpH{0};
 static void V65ObserveAndMaybePrecompose(GLint currentFbo);
 
 // =============================================================================
-// V68 - ROLLBACK THE FINAL FBO0 BLACKOUT DRAW
+// V69 - BACKUP IMMEDIATELY AFTER FINAL INDEXED CANDIDATE
 //
 // V67 proved that the queued 2D path DOES write pixels into FBO0 with sane GL
 // state.  On the first two traced frames, one final non-indexed command then
 // changed all probe samples from non-black to black immediately before RQ swap.
 // V65 had already seeded world -> FBO0 before 2D, but that same final command
-// therefore erased the composed image.  V68 keeps V65 and performs a narrow,
-// self-learning rollback around that exact state transition:
+// therefore erased the composed image. V68 detected the candidate but never
+// armed its backup because it tried to validate the *next command's pre-state*.
+// V69 removes that fragile assumption:
 //   indexed draw on FBO0 learns the final program+texture signature;
-//   matching following non-indexed draw gets a one-frame backup;
-//   if it disables blending and turns all three probe samples black, restore
-//   the backup immediately and let any later queue commands continue normally.
+//   immediately AFTER that indexed draw, copy FBO0 to the backup target;
+//   the following non-indexed draw is allowed to execute normally;
+//   if it leaves the same signature with blending OFF and probe pixels black,
+//   restore the backup immediately before RQ swap.
 // No private RenderQueue flush/process calls are used.
 // =============================================================================
 #ifndef GL_READ_FRAMEBUFFER
@@ -876,44 +878,45 @@ static void V68LearnCandidateAfterIndexed(unsigned int seq)
         g_v68CandidateProgram.store(program, std::memory_order_release);
         g_v68CandidateTexture.store(tex, std::memory_order_release);
         g_v68CandidateSeq.store(seq, std::memory_order_release);
+
+        // V69: capture the valid composed FBO0 NOW, while the candidate indexed
+        // draw has already completed. V68 waited until the next hook and its
+        // pre-state gate prevented the backup from ever being armed.
+        const bool backedUp = V68BlitDefaultAndBackup(true);
+        if (backedUp)
+            g_v68BackupSeq.store(seq, std::memory_order_release);
+        else
+            g_v68BackupSeq.store(0, std::memory_order_release);
+
         if (seq <= 16)
-            FLog("V68 FINAL CANDIDATE | seq=%u prog=%d tex=%d", seq, program, tex);
+        {
+            FLog("V69 FINAL CANDIDATE | seq=%u prog=%d tex=%d", seq, program, tex);
+            FLog("V69 BACKUP AFTER CANDIDATE | seq=%u prog=%d tex=%d ok=%d",
+                 seq, program, tex, backedUp ? 1 : 0);
+        }
     }
 }
 
-static bool V68ArmRollbackBeforeNonIndexed(unsigned int seq)
+static bool V69RollbackReadyBeforeNonIndexed(unsigned int seq)
 {
     if (seq == 0 || seq > 64 || eglGetCurrentContext() == EGL_NO_CONTEXT)
         return false;
 
-    const int candidateProg =
-            g_v68CandidateProgram.load(std::memory_order_acquire);
-    const int candidateTex =
-            g_v68CandidateTexture.load(std::memory_order_acquire);
     const unsigned int candidateSeq =
             g_v68CandidateSeq.load(std::memory_order_acquire);
-    if (candidateSeq != seq || candidateProg <= 1 || candidateTex <= 0)
+    const unsigned int backupSeq =
+            g_v68BackupSeq.load(std::memory_order_acquire);
+
+    if (candidateSeq != seq || backupSeq != seq)
         return false;
 
-    GLint fbo = -1, program = -1, tex = -1;
+    GLint fbo = -1;
     glGetIntegerv(GL_FRAMEBUFFER_BINDING, &fbo);
-    glGetIntegerv(GL_CURRENT_PROGRAM, &program);
-    glGetIntegerv(GL_TEXTURE_BINDING_2D, &tex);
-    const GLboolean blend = glIsEnabled(GL_BLEND);
-    const GLboolean depth = glIsEnabled(GL_DEPTH_TEST);
-
-    if (fbo != 0 || program != candidateProg || tex != candidateTex ||
-        !blend || !depth)
-        return false;
-
-    const bool ok = V68BlitDefaultAndBackup(true);
-    if (ok)
-    {
-        g_v68BackupSeq.store(seq, std::memory_order_release);
-        if (seq <= 16)
-            FLog("V68 BACKUP ARMED | seq=%u prog=%d tex=%d", seq, program, tex);
-    }
-    return ok;
+    const bool ready = (fbo == 0);
+    if (seq <= 16)
+        FLog("V69 ROLLBACK READY | seq=%u fbo=%d ready=%d",
+             seq, (int)fbo, ready ? 1 : 0);
+    return ready;
 }
 
 static void V68MaybeRollbackAfterNonIndexed(unsigned int seq, bool armed)
@@ -947,12 +950,12 @@ static void V68MaybeRollbackAfterNonIndexed(unsigned int seq, bool armed)
         const unsigned int count =
                 g_v68RollbackCount.fetch_add(1, std::memory_order_relaxed) + 1;
         if (seq <= 16 || (seq % 120u) == 0u)
-            FLog("V68 BLACKOUT ROLLBACK | seq=%u count=%u prog=%d tex=%d restored=1",
+            FLog("V69 BLACKOUT ROLLBACK | seq=%u count=%u prog=%d tex=%d restored=1",
                  seq, count, program, tex);
     }
     else if (seq <= 16)
     {
-        FLog("V68 BLACKOUT ROLLBACK | seq=%u prog=%d tex=%d restored=0",
+        FLog("V69 BLACKOUT ROLLBACK | seq=%u prog=%d tex=%d restored=0",
              seq, program, tex);
     }
 }
@@ -1046,12 +1049,12 @@ static void V64RQDrawNonIndexed_hook(char*& command)
              tid, (void*)eglGetCurrentContext(), (int)fbo, (void*)command);
     }
 
-    const bool v68Armed = V68ArmRollbackBeforeNonIndexed(probeSeq);
+    const bool v69Ready = V69RollbackReadyBeforeNonIndexed(probeSeq);
 
     if (V64RQDrawNonIndexed_Original)
         V64RQDrawNonIndexed_Original(command);
 
-    V68MaybeRollbackAfterNonIndexed(probeSeq, v68Armed);
+    V68MaybeRollbackAfterNonIndexed(probeSeq, v69Ready);
 }
 
 static void V64RQTargetSelect_hook(char*& command)
@@ -5521,7 +5524,7 @@ void InstallHooks()
                       &V64RQSwapBuffers_hook,
                       &V64RQSwapBuffers_Original);
 
-    FLog("V68 INSTALL: V65_PRECOMPOSE + FINAL_BLACKOUT_ROLLBACK + V64_TRACE + V61_GATE");
+    FLog("V69 INSTALL: V65_PRECOMPOSE + BACKUP_AFTER_CANDIDATE + BLACKOUT_ROLLBACK + V64_TRACE + V61_GATE");
 
     g_v29EglSwapStub = shadowhook_hook_sym_name(
             "libEGL.so",
