@@ -644,7 +644,7 @@ static std::atomic<int> g_v65WorldVpH{0};
 static void V65ObserveAndMaybePrecompose(GLint currentFbo);
 
 // =============================================================================
-// V69 - BACKUP IMMEDIATELY AFTER FINAL INDEXED CANDIDATE
+// FINAL RENDER FIX - CONFIRMED FINAL BLACKOUT COMMAND ISOLATION
 //
 // V67 proved that the queued 2D path DOES write pixels into FBO0 with sane GL
 // state.  On the first two traced frames, one final non-indexed command then
@@ -689,6 +689,17 @@ static std::atomic<unsigned int> g_v68CandidateSeq{0};
 static std::atomic<unsigned int> g_v68BackupSeq{0};
 static std::atomic<unsigned int> g_v68RollbackSeq{0};
 static std::atomic<unsigned int> g_v68RollbackCount{0};
+
+// FINAL RENDER FIX: V69 proved that the immediate non-indexed command after
+// the final indexed 2D candidate blacks FBO0.  Confirm that signature once
+// with V69's safe backup/rollback, then execute the destructive command in a
+// private sink FBO on subsequent frames.  The command parser/state changes
+// still run, but its black pixels can no longer touch the EGL backbuffer.
+static std::atomic<int> g_finalBlackoutConfirmed{0};
+static std::atomic<int> g_finalBlackoutProgram{-1};
+static std::atomic<int> g_finalBlackoutTexture{-1};
+static std::atomic<unsigned int> g_finalSinkSeq{0};
+static std::atomic<unsigned int> g_finalSinkCount{0};
 
 static bool V68EnsureBackupTarget(GLint width, GLint height)
 {
@@ -858,9 +869,11 @@ static bool V68AllProbeSamplesBlack()
     return black(a) && black(b) && black(c);
 }
 
+static void (*V64RQDrawNonIndexed_Original)(char*&) = nullptr;
+
 static void V68LearnCandidateAfterIndexed(unsigned int seq)
 {
-    if (seq == 0 || seq > 64 || eglGetCurrentContext() == EGL_NO_CONTEXT)
+    if (seq == 0 || eglGetCurrentContext() == EGL_NO_CONTEXT)
         return;
 
     GLint fbo = -1, program = -1, tex = -1;
@@ -870,36 +883,118 @@ static void V68LearnCandidateAfterIndexed(unsigned int seq)
     const GLboolean blend = glIsEnabled(GL_BLEND);
     const GLboolean depth = glIsEnabled(GL_DEPTH_TEST);
 
-    // V67's final pre-black state is an indexed FBO0 draw using a non-default
-    // 2D program, blending ON, depth test ON, followed immediately by a
-    // non-indexed draw using the same program+texture with blending OFF.
-    if (fbo == 0 && program > 1 && tex > 0 && blend && depth)
+    if (!(fbo == 0 && program > 1 && tex > 0 && blend && depth))
+        return;
+
+    // After one V69 rollback has positively confirmed the destructive pair,
+    // only arm the same learned program/texture signature.  No more full-screen
+    // backup is needed on every frame.
+    if (g_finalBlackoutConfirmed.load(std::memory_order_acquire) != 0)
     {
-        g_v68CandidateProgram.store(program, std::memory_order_release);
-        g_v68CandidateTexture.store(tex, std::memory_order_release);
-        g_v68CandidateSeq.store(seq, std::memory_order_release);
+        const int learnedProgram =
+                g_finalBlackoutProgram.load(std::memory_order_acquire);
+        const int learnedTexture =
+                g_finalBlackoutTexture.load(std::memory_order_acquire);
 
-        // V69: capture the valid composed FBO0 NOW, while the candidate indexed
-        // draw has already completed. V68 waited until the next hook and its
-        // pre-state gate prevented the backup from ever being armed.
-        const bool backedUp = V68BlitDefaultAndBackup(true);
-        if (backedUp)
-            g_v68BackupSeq.store(seq, std::memory_order_release);
-        else
-            g_v68BackupSeq.store(0, std::memory_order_release);
-
-        if (seq <= 16)
+        if (program == learnedProgram && tex == learnedTexture)
         {
-            FLog("V69 FINAL CANDIDATE | seq=%u prog=%d tex=%d", seq, program, tex);
-            FLog("V69 BACKUP AFTER CANDIDATE | seq=%u prog=%d tex=%d ok=%d",
-                 seq, program, tex, backedUp ? 1 : 0);
+            g_v68CandidateProgram.store(program, std::memory_order_release);
+            g_v68CandidateTexture.store(tex, std::memory_order_release);
+            g_v68CandidateSeq.store(seq, std::memory_order_release);
+            g_v68BackupSeq.store(0, std::memory_order_release);
+            g_finalSinkSeq.store(seq, std::memory_order_release);
+
+            if (seq <= 16 || (seq % 120u) == 0u)
+                FLog("RENDERFIX ARM BLACKOUT SINK | seq=%u prog=%d tex=%d",
+                     seq, program, tex);
         }
+        return;
     }
+
+    // First confirmation uses the already-proven V69 transaction: preserve the
+    // valid FBO0 immediately after the indexed candidate, execute the next
+    // non-indexed command, and restore only if it actually blacks the samples.
+    g_v68CandidateProgram.store(program, std::memory_order_release);
+    g_v68CandidateTexture.store(tex, std::memory_order_release);
+    g_v68CandidateSeq.store(seq, std::memory_order_release);
+
+    const bool backedUp = V68BlitDefaultAndBackup(true);
+    if (backedUp)
+        g_v68BackupSeq.store(seq, std::memory_order_release);
+    else
+        g_v68BackupSeq.store(0, std::memory_order_release);
+
+    if (seq <= 16 || (seq % 120u) == 0u)
+    {
+        FLog("RENDERFIX CANDIDATE | seq=%u prog=%d tex=%d", seq, program, tex);
+        FLog("RENDERFIX CONFIRM BACKUP | seq=%u prog=%d tex=%d ok=%d",
+             seq, program, tex, backedUp ? 1 : 0);
+    }
+}
+
+static bool VFinalShouldSinkBeforeNonIndexed(unsigned int seq)
+{
+    if (seq == 0 || eglGetCurrentContext() == EGL_NO_CONTEXT ||
+        g_finalBlackoutConfirmed.load(std::memory_order_acquire) == 0 ||
+        g_finalSinkSeq.load(std::memory_order_acquire) != seq)
+        return false;
+
+    GLint fbo = -1, program = -1, tex = -1;
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &fbo);
+    glGetIntegerv(GL_CURRENT_PROGRAM, &program);
+    glGetIntegerv(GL_TEXTURE_BINDING_2D, &tex);
+
+    return fbo == 0 &&
+           program == g_finalBlackoutProgram.load(std::memory_order_acquire) &&
+           tex == g_finalBlackoutTexture.load(std::memory_order_acquire);
+}
+
+static bool VFinalExecuteNonIndexedInSink(char*& command, unsigned int seq)
+{
+    if (!V64RQDrawNonIndexed_Original || eglGetCurrentContext() == EGL_NO_CONTEXT)
+        return false;
+
+    GLint width = 0, height = 0;
+    if (!V68GetSurfaceSize(width, height) || !V68EnsureBackupTarget(width, height))
+        return false;
+
+    GLint savedFbo = -1;
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &savedFbo);
+    if (savedFbo != 0)
+        return false;
+
+    while (glGetError() != GL_NO_ERROR) {}
+    glBindFramebuffer(GL_FRAMEBUFFER, g_v68BackupFbo);
+    const GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+    const GLenum bindErr = glGetError();
+    if (status != GL_FRAMEBUFFER_COMPLETE || bindErr != GL_NO_ERROR)
+    {
+        glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)savedFbo);
+        glGetError();
+        return false;
+    }
+
+    // Important: call the original handler so it still consumes/advances the
+    // RenderQueue command and applies its normal state changes.  Only the draw
+    // target is diverted away from FBO0.
+    V64RQDrawNonIndexed_Original(command);
+
+    glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)savedFbo);
+    const GLenum restoreErr = glGetError();
+    g_finalSinkSeq.store(0, std::memory_order_release);
+
+    const unsigned int count =
+            g_finalSinkCount.fetch_add(1, std::memory_order_relaxed) + 1;
+    if (seq <= 16 || (seq % 120u) == 0u)
+        FLog("RENDERFIX BLACKOUT SINK | seq=%u count=%u sinkFbo=%u restoreErr=0x%x",
+             seq, count, (unsigned int)g_v68BackupFbo, (unsigned int)restoreErr);
+
+    return true;
 }
 
 static bool V69RollbackReadyBeforeNonIndexed(unsigned int seq)
 {
-    if (seq == 0 || seq > 64 || eglGetCurrentContext() == EGL_NO_CONTEXT)
+    if (seq == 0 || eglGetCurrentContext() == EGL_NO_CONTEXT)
         return false;
 
     const unsigned int candidateSeq =
@@ -947,8 +1042,15 @@ static void V68MaybeRollbackAfterNonIndexed(unsigned int seq, bool armed)
     if (restored)
     {
         g_v68RollbackSeq.store(seq, std::memory_order_release);
+        g_finalBlackoutProgram.store(program, std::memory_order_release);
+        g_finalBlackoutTexture.store(tex, std::memory_order_release);
+        g_finalBlackoutConfirmed.store(1, std::memory_order_release);
+        g_finalSinkSeq.store(0, std::memory_order_release);
+
         const unsigned int count =
                 g_v68RollbackCount.fetch_add(1, std::memory_order_relaxed) + 1;
+        FLog("RENDERFIX BLACKOUT CONFIRMED | seq=%u prog=%d tex=%d restored=1",
+             seq, program, tex);
         if (seq <= 16 || (seq % 120u) == 0u)
             FLog("V69 BLACKOUT ROLLBACK | seq=%u count=%u prog=%d tex=%d restored=1",
                  seq, count, program, tex);
@@ -961,7 +1063,6 @@ static void V68MaybeRollbackAfterNonIndexed(unsigned int seq, bool armed)
 }
 
 static void (*V64RQDrawIndexed_Original)(char*&) = nullptr;
-static void (*V64RQDrawNonIndexed_Original)(char*&) = nullptr;
 static void (*V64RQTargetSelect_Original)(char*&) = nullptr;
 static void (*V64RQSwapBuffers_Original)(char*&) = nullptr;
 
@@ -1047,6 +1148,15 @@ static void V64RQDrawNonIndexed_hook(char*& command)
              total, nonIndexed, probeSeq, probeBase,
              total >= probeBase ? total - probeBase : 0u,
              tid, (void*)eglGetCurrentContext(), (int)fbo, (void*)command);
+    }
+
+    // Once V69 has confirmed the exact destructive pair, keep executing the
+    // queue command but divert its pixels into the private sink FBO.  This is
+    // the permanent correction: FBO0 keeps world + HUD/chat/TextDraw intact.
+    if (VFinalShouldSinkBeforeNonIndexed(probeSeq))
+    {
+        if (VFinalExecuteNonIndexedInSink(command, probeSeq))
+            return;
     }
 
     const bool v69Ready = V69RollbackReadyBeforeNonIndexed(probeSeq);
@@ -5524,7 +5634,7 @@ void InstallHooks()
                       &V64RQSwapBuffers_hook,
                       &V64RQSwapBuffers_Original);
 
-    FLog("V69 INSTALL: V65_PRECOMPOSE + BACKUP_AFTER_CANDIDATE + BLACKOUT_ROLLBACK + V64_TRACE + V61_GATE");
+    FLog("RENDERFIX INSTALL: CONFIRMED_FINAL_BLACKOUT_SINK + V65_PRECOMPOSE + V61_GATE");
 
     g_v29EglSwapStub = shadowhook_hook_sym_name(
             "libEGL.so",
