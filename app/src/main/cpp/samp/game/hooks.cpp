@@ -36,6 +36,7 @@
 #include "FileLoader.h"
 #include "Renderer.h"
 #include "CrossHair.h"
+#include "Widgets/WidgetRadar.h"
 #include "World.h"
 #include "Core/Matrix.h"
 
@@ -5391,7 +5392,8 @@ void InjectHooks()
     TextureDatabaseEntry::InjectHooks();
     TextureDatabaseRuntime::InjectHooks();
     CCustomBuildingDNPipeline::InjectHooks();
-    //CWidgetRadar::InjectHooks();
+    CWidgetRadar::InjectHooks();
+    FLog("RADAR STEP1: CWidgetRadar hooks enabled");
 
     //CRealTimeShadowManager::InjectHooks();
     CHook::Write(g_libGTASA+(VER_x32 ? 0xA41140 : 0xCE3EE8), &COcclusion::aOccluders);
