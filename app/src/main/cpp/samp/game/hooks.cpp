@@ -1356,6 +1356,20 @@ void Render2dStuff_V26_hook()
     // render-targets nativos desta build.
     Render2dStuff_V26_Original();
 
+    // RADAR STEP4:
+    // STEP2 provou que os hooks do CWidgetRadar estao instalando.
+    // STEP3 provou que GetRadarTraceColour nao e o motivo do mapa sumir.
+    // Esta base antiga ja tinha o endereco do CHud::DrawRadar documentado,
+    // mas a chamada estava comentada. Chamamos somente o DrawRadar aqui,
+    // no mesmo producer 2D que ja enfileira o HUD original.
+    if (pGame && pNetGame && pGame->FindPlayerPed())
+    {
+        ((void (*)())(g_libGTASA + (VER_x32 ? 0x00437B0C + 1 : 0x51CFF0)))();
+
+        if (current <= 16 || (current % 120u) == 0u)
+            FLog("RADAR STEP4 DRAW: CHud::DrawRadar called | seq=%u", current);
+    }
+
     if (current <= 16)
         FLog("V58 ORIGINAL2D END | seq=%u", current);
 
@@ -5578,7 +5592,7 @@ void InstallHooks()
     // The old CWidgetRadar::InjectHooks() line lived inside InstallSpecialHooks/InjectHooks,
     // which is not executed in the current startup path. Keep this test isolated to radar.
     CWidgetRadar::InjectHooks();
-    FLog("RADAR STEP3 INSTALL: CWidgetRadar enabled + original GetRadarTraceColour");
+    FLog("RADAR STEP4 INSTALL: direct CHud::DrawRadar test + CWidgetRadar + original GetRadarTraceColour");
     CHook::InlineHook("_Z14AND_TouchEventiiii", &AND_TouchEvent_hook, &AND_TouchEvent);
 	
     CHook::Redirect("_ZN11CHudColours12GetIntColourEh", &CHudColours__GetIntColour); // dangerous
@@ -5587,7 +5601,7 @@ void InstallHooks()
     // enabling CWidgetRadar does not bring the minimap back. Keep every other
     // render fix/hook unchanged for an isolated radar test.
     // CHook::Redirect("_ZN6CRadar19GetRadarTraceColourEjhh", &CRadar__GetRadarTraceColor); // disabled in STEP3
-    FLog("RADAR STEP3: original CRadar::GetRadarTraceColour restored");
+    FLog("RADAR STEP4: original CRadar::GetRadarTraceColour kept");
     CHook::InlineHook("_ZN6CRadar12SetCoordBlipE9eBlipType7CVectorj12eBlipDisplayPc", &CRadar__SetCoordBlip_hook, &CRadar__SetCoordBlip);
     CHook::InlineHook("_ZN6CRadar20DrawRadarGangOverlayEb", &CRadar_DrawRadarGangOverlay_hook, &CRadar_DrawRadarGangOverlay);
 
