@@ -1343,6 +1343,7 @@ static void V63SubmitRw2DProbe(unsigned int seq)
 static uint8_t* g_radarStep5DisplayHud = nullptr;
 static uint8_t* g_radarStep5DontDisplayRadar = nullptr;
 static uint8_t* g_radarStep6WantsToDrawHud = nullptr;
+static void (*g_radarStep7DrawMap)() = nullptr;
 static bool g_radarStep5Resolved = false;
 
 static void RadarStep5ForceVisibility(unsigned int seq)
@@ -1360,10 +1361,13 @@ static void RadarStep5ForceVisibility(unsigned int seq)
                     reinterpret_cast<uint8_t*>(dlsym(gtasa, "_ZN4CHud23bScriptDontDisplayRadarE"));
             g_radarStep6WantsToDrawHud =
                     reinterpret_cast<uint8_t*>(dlsym(gtasa, "_ZN4CHud19m_Wants_To_Draw_HudE"));
+            g_radarStep7DrawMap =
+                    reinterpret_cast<void (*)()>(dlsym(gtasa, "_ZN6CRadar7DrawMapEv"));
         }
 
-        FLog("RADAR STEP6 GATES RESOLVED | displayHud=%p dontDisplayRadar=%p wantsHud=%p",
-             g_radarStep5DisplayHud, g_radarStep5DontDisplayRadar, g_radarStep6WantsToDrawHud);
+        FLog("RADAR STEP7 RESOLVED | displayHud=%p dontDisplayRadar=%p wantsHud=%p drawMap=%p",
+             g_radarStep5DisplayHud, g_radarStep5DontDisplayRadar,
+             g_radarStep6WantsToDrawHud, (void*)g_radarStep7DrawMap);
     }
 
     if (g_radarStep5DisplayHud)
@@ -1386,7 +1390,7 @@ static void RadarStep5ForceVisibility(unsigned int seq)
         const int wantsHud =
                 g_radarStep6WantsToDrawHud ? (int)*g_radarStep6WantsToDrawHud : -1;
 
-        FLog("RADAR STEP6 GATES | seq=%u displayHud=%d dontDisplayRadar=%d wantsHud=%d",
+        FLog("RADAR STEP7 GATES | seq=%u displayHud=%d dontDisplayRadar=%d wantsHud=%d",
              seq, displayHud, dontDisplayRadar, wantsHud);
     }
 }
@@ -1424,10 +1428,25 @@ void Render2dStuff_V26_hook()
     {
         RadarStep5ForceVisibility(current);
 
+        // STEP7: STEP6 proved all visibility gates are open. The missing piece is
+        // now the actual map pass. Call CRadar::DrawMap directly through the
+        // exported GTASA symbol, then let CHud::DrawRadar draw its normal overlay.
+        if (g_radarStep7DrawMap)
+        {
+            g_radarStep7DrawMap();
+
+            if (current <= 16 || (current % 120u) == 0u)
+                FLog("RADAR STEP7 DRAWMAP: CRadar::DrawMap called | seq=%u", current);
+        }
+        else if (current == 1)
+        {
+            FLog("RADAR STEP7 DRAWMAP: symbol unavailable");
+        }
+
         ((void (*)())(g_libGTASA + (VER_x32 ? 0x00437B0C + 1 : 0x51CFF0)))();
 
         if (current <= 16 || (current % 120u) == 0u)
-            FLog("RADAR STEP6 DRAW: CHud::DrawRadar called | seq=%u", current);
+            FLog("RADAR STEP7 DRAWRADAR: CHud::DrawRadar called | seq=%u", current);
     }
 
     if (current <= 16)
@@ -5652,7 +5671,7 @@ void InstallHooks()
     // The old CWidgetRadar::InjectHooks() line lived inside InstallSpecialHooks/InjectHooks,
     // which is not executed in the current startup path. Keep this test isolated to radar.
     CWidgetRadar::InjectHooks();
-    FLog("RADAR STEP6 INSTALL: force CHud::m_Wants_To_Draw_Hud + STEP5 gates + direct DrawRadar");
+    FLog("RADAR STEP7 INSTALL: direct CRadar::DrawMap + STEP6 gates + CHud::DrawRadar");
     CHook::InlineHook("_Z14AND_TouchEventiiii", &AND_TouchEvent_hook, &AND_TouchEvent);
 	
     CHook::Redirect("_ZN11CHudColours12GetIntColourEh", &CHudColours__GetIntColour); // dangerous
@@ -5661,7 +5680,7 @@ void InstallHooks()
     // enabling CWidgetRadar does not bring the minimap back. Keep every other
     // render fix/hook unchanged for an isolated radar test.
     // CHook::Redirect("_ZN6CRadar19GetRadarTraceColourEjhh", &CRadar__GetRadarTraceColor); // disabled in STEP3
-    FLog("RADAR STEP6: original CRadar::GetRadarTraceColour kept");
+    FLog("RADAR STEP7: original CRadar::GetRadarTraceColour kept");
     CHook::InlineHook("_ZN6CRadar12SetCoordBlipE9eBlipType7CVectorj12eBlipDisplayPc", &CRadar__SetCoordBlip_hook, &CRadar__SetCoordBlip);
     CHook::InlineHook("_ZN6CRadar20DrawRadarGangOverlayEb", &CRadar_DrawRadarGangOverlay_hook, &CRadar_DrawRadarGangOverlay);
 
