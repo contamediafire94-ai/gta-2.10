@@ -1345,6 +1345,7 @@ static uint8_t* g_radarStep5DontDisplayRadar = nullptr;
 static uint8_t* g_radarStep6WantsToDrawHud = nullptr;
 static void (*g_radarStep8DrawRadarMap)() = nullptr;
 static void (*g_radarStep9LoadTextures)() = nullptr;
+static void (*g_radarStep10Initialise)() = nullptr;
 static bool g_radarStep9TexturesAttempted = false;
 static bool g_radarStep5Resolved = false;
 
@@ -1367,12 +1368,14 @@ static void RadarStep5ForceVisibility(unsigned int seq)
                     reinterpret_cast<void (*)()>(dlsym(gtasa, "_ZN6CRadar12DrawRadarMapEv"));
             g_radarStep9LoadTextures =
                     reinterpret_cast<void (*)()>(dlsym(gtasa, "_ZN6CRadar12LoadTexturesEv"));
+            g_radarStep10Initialise =
+                    reinterpret_cast<void (*)()>(dlsym(gtasa, "_ZN6CRadar10InitialiseEv"));
         }
 
-        FLog("RADAR STEP9 RESOLVED | displayHud=%p dontDisplayRadar=%p wantsHud=%p drawRadarMap=%p loadTextures=%p",
+        FLog("RADAR STEP10 RESOLVED | displayHud=%p dontDisplayRadar=%p wantsHud=%p drawRadarMap=%p loadTextures=%p initialise=%p",
              g_radarStep5DisplayHud, g_radarStep5DontDisplayRadar,
              g_radarStep6WantsToDrawHud, (void*)g_radarStep8DrawRadarMap,
-             (void*)g_radarStep9LoadTextures);
+             (void*)g_radarStep9LoadTextures, (void*)g_radarStep10Initialise);
     }
 
     if (g_radarStep5DisplayHud)
@@ -1395,7 +1398,7 @@ static void RadarStep5ForceVisibility(unsigned int seq)
         const int wantsHud =
                 g_radarStep6WantsToDrawHud ? (int)*g_radarStep6WantsToDrawHud : -1;
 
-        FLog("RADAR STEP9 GATES | seq=%u displayHud=%d dontDisplayRadar=%d wantsHud=%d",
+        FLog("RADAR STEP10 GATES | seq=%u displayHud=%d dontDisplayRadar=%d wantsHud=%d",
              seq, displayHud, dontDisplayRadar, wantsHud);
     }
 }
@@ -1433,22 +1436,33 @@ void Render2dStuff_V26_hook()
     {
         RadarStep5ForceVisibility(current);
 
-        // STEP9:
-        // STEP8 proved DrawRadarMap is executing but the map remains absent.
-        // Initialise ONLY the native radar textures once, then keep the exact
-        // same DrawRadarMap/DrawRadar path. No RenderFix changes here.
+        // STEP10:
+        // STEP9 proved CRadar::LoadTextures executes, but that routine mainly
+        // prepares radar/blip sprites. The native CRadar::Initialise path is the
+        // stage that prepares the radar map section table. Run it ONCE, then
+        // reload radar sprites and keep the same DrawRadarMap path.
         if (!g_radarStep9TexturesAttempted)
         {
             g_radarStep9TexturesAttempted = true;
 
-            if (g_radarStep9LoadTextures)
+            if (g_radarStep10Initialise)
             {
-                g_radarStep9LoadTextures();
-                FLog("RADAR STEP9 LOADTEXTURES: CRadar::LoadTextures called");
+                g_radarStep10Initialise();
+                FLog("RADAR STEP10 INITIALISE: CRadar::Initialise called");
             }
             else
             {
-                FLog("RADAR STEP9 LOADTEXTURES: symbol unavailable");
+                FLog("RADAR STEP10 INITIALISE: symbol unavailable");
+            }
+
+            if (g_radarStep9LoadTextures)
+            {
+                g_radarStep9LoadTextures();
+                FLog("RADAR STEP10 LOADTEXTURES: CRadar::LoadTextures called");
+            }
+            else
+            {
+                FLog("RADAR STEP10 LOADTEXTURES: symbol unavailable");
             }
         }
 
@@ -1457,17 +1471,17 @@ void Render2dStuff_V26_hook()
             g_radarStep8DrawRadarMap();
 
             if (current <= 16 || (current % 120u) == 0u)
-                FLog("RADAR STEP9 RADARMAP: CRadar::DrawRadarMap called | seq=%u", current);
+                FLog("RADAR STEP10 RADARMAP: CRadar::DrawRadarMap called | seq=%u", current);
         }
         else if (current == 1)
         {
-            FLog("RADAR STEP9 RADARMAP: symbol unavailable");
+            FLog("RADAR STEP10 RADARMAP: symbol unavailable");
         }
 
         ((void (*)())(g_libGTASA + (VER_x32 ? 0x00437B0C + 1 : 0x51CFF0)))();
 
         if (current <= 16 || (current % 120u) == 0u)
-            FLog("RADAR STEP9 DRAWRADAR: CHud::DrawRadar called | seq=%u", current);
+            FLog("RADAR STEP10 DRAWRADAR: CHud::DrawRadar called | seq=%u", current);
     }
 
     if (current <= 16)
@@ -5692,7 +5706,7 @@ void InstallHooks()
     // The old CWidgetRadar::InjectHooks() line lived inside InstallSpecialHooks/InjectHooks,
     // which is not executed in the current startup path. Keep this test isolated to radar.
     CWidgetRadar::InjectHooks();
-    FLog("RADAR STEP9 INSTALL: one-time CRadar::LoadTextures + DrawRadarMap + CHud::DrawRadar");
+    FLog("RADAR STEP10 INSTALL: one-time CRadar::Initialise + LoadTextures + DrawRadarMap");
     CHook::InlineHook("_Z14AND_TouchEventiiii", &AND_TouchEvent_hook, &AND_TouchEvent);
 	
     CHook::Redirect("_ZN11CHudColours12GetIntColourEh", &CHudColours__GetIntColour); // dangerous
@@ -5701,7 +5715,7 @@ void InstallHooks()
     // enabling CWidgetRadar does not bring the minimap back. Keep every other
     // render fix/hook unchanged for an isolated radar test.
     // CHook::Redirect("_ZN6CRadar19GetRadarTraceColourEjhh", &CRadar__GetRadarTraceColor); // disabled in STEP3
-    FLog("RADAR STEP9: original CRadar::GetRadarTraceColour kept");
+    FLog("RADAR STEP10: original CRadar::GetRadarTraceColour kept");
     CHook::InlineHook("_ZN6CRadar12SetCoordBlipE9eBlipType7CVectorj12eBlipDisplayPc", &CRadar__SetCoordBlip_hook, &CRadar__SetCoordBlip);
     CHook::InlineHook("_ZN6CRadar20DrawRadarGangOverlayEb", &CRadar_DrawRadarGangOverlay_hook, &CRadar_DrawRadarGangOverlay);
 
