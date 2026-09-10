@@ -5578,11 +5578,16 @@ void InstallHooks()
     // The old CWidgetRadar::InjectHooks() line lived inside InstallSpecialHooks/InjectHooks,
     // which is not executed in the current startup path. Keep this test isolated to radar.
     CWidgetRadar::InjectHooks();
-    FLog("RADAR STEP2 INSTALL: CWidgetRadar hooks enabled from InstallHooks");
+    FLog("RADAR STEP3 INSTALL: CWidgetRadar enabled + original GetRadarTraceColour");
     CHook::InlineHook("_Z14AND_TouchEventiiii", &AND_TouchEvent_hook, &AND_TouchEvent);
 	
     CHook::Redirect("_ZN11CHudColours12GetIntColourEh", &CHudColours__GetIntColour); // dangerous
-    CHook::Redirect("_ZN6CRadar19GetRadarTraceColourEjhh", &CRadar__GetRadarTraceColor); // dangerous
+    // RADAR STEP3: restore the original GTA radar trace-colour function.
+    // This redirect is marked dangerous in the base and STEP2 proved that merely
+    // enabling CWidgetRadar does not bring the minimap back. Keep every other
+    // render fix/hook unchanged for an isolated radar test.
+    // CHook::Redirect("_ZN6CRadar19GetRadarTraceColourEjhh", &CRadar__GetRadarTraceColor); // disabled in STEP3
+    FLog("RADAR STEP3: original CRadar::GetRadarTraceColour restored");
     CHook::InlineHook("_ZN6CRadar12SetCoordBlipE9eBlipType7CVectorj12eBlipDisplayPc", &CRadar__SetCoordBlip_hook, &CRadar__SetCoordBlip);
     CHook::InlineHook("_ZN6CRadar20DrawRadarGangOverlayEb", &CRadar_DrawRadarGangOverlay_hook, &CRadar_DrawRadarGangOverlay);
 
