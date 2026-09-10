@@ -7,6 +7,7 @@
 #include <string.h>
 #include <ctype.h>
 #include <dirent.h>
+#include <dlfcn.h>
 #include <strings.h>
 #include "../main.h"
 #include "../vendor/armhook/patch.h"
@@ -1330,6 +1331,56 @@ static void V63SubmitRw2DProbe(unsigned int seq)
     }
 }
 
+
+// -----------------------------------------------------------------------------
+// RADAR STEP5
+// STEP4 proved CHud::DrawRadar is actually called every frame but still produces
+// no visible minimap. The next narrow test is to force the two native GTA gates
+// that can suppress the HUD/radar before calling DrawRadar.
+// Symbols are resolved dynamically so no new hard-coded arm64 data offsets are
+// introduced. If a symbol is unavailable, the pointer stays null and is logged.
+// -----------------------------------------------------------------------------
+static uint8_t* g_radarStep5DisplayHud = nullptr;
+static uint8_t* g_radarStep5DontDisplayRadar = nullptr;
+static bool g_radarStep5Resolved = false;
+
+static void RadarStep5ForceVisibility(unsigned int seq)
+{
+    if (!g_radarStep5Resolved)
+    {
+        g_radarStep5Resolved = true;
+
+        void* gtasa = dlopen("libGTASA.so", RTLD_NOW);
+        if (gtasa)
+        {
+            g_radarStep5DisplayHud =
+                    reinterpret_cast<uint8_t*>(dlsym(gtasa, "_ZN11CTheScripts11bDisplayHudE"));
+            g_radarStep5DontDisplayRadar =
+                    reinterpret_cast<uint8_t*>(dlsym(gtasa, "_ZN4CHud23bScriptDontDisplayRadarE"));
+        }
+
+        FLog("RADAR STEP5 GATES RESOLVED | displayHud=%p dontDisplayRadar=%p",
+             g_radarStep5DisplayHud, g_radarStep5DontDisplayRadar);
+    }
+
+    if (g_radarStep5DisplayHud)
+        *g_radarStep5DisplayHud = 1;
+
+    if (g_radarStep5DontDisplayRadar)
+        *g_radarStep5DontDisplayRadar = 0;
+
+    if (seq <= 16 || (seq % 120u) == 0u)
+    {
+        const int displayHud =
+                g_radarStep5DisplayHud ? (int)*g_radarStep5DisplayHud : -1;
+        const int dontDisplayRadar =
+                g_radarStep5DontDisplayRadar ? (int)*g_radarStep5DontDisplayRadar : -1;
+
+        FLog("RADAR STEP5 GATES | seq=%u displayHud=%d dontDisplayRadar=%d",
+             seq, displayHud, dontDisplayRadar);
+    }
+}
+
 void Render2dStuff_V26_hook()
 {
     static unsigned int seq = 0;
@@ -1356,18 +1407,17 @@ void Render2dStuff_V26_hook()
     // render-targets nativos desta build.
     Render2dStuff_V26_Original();
 
-    // RADAR STEP4:
-    // STEP2 provou que os hooks do CWidgetRadar estao instalando.
-    // STEP3 provou que GetRadarTraceColour nao e o motivo do mapa sumir.
-    // Esta base antiga ja tinha o endereco do CHud::DrawRadar documentado,
-    // mas a chamada estava comentada. Chamamos somente o DrawRadar aqui,
-    // no mesmo producer 2D que ja enfileira o HUD original.
+    // RADAR STEP5:
+    // STEP4 confirmed CHud::DrawRadar is really reached, so now force only the
+    // native visibility gates immediately before the same DrawRadar call.
     if (pGame && pNetGame && pGame->FindPlayerPed())
     {
+        RadarStep5ForceVisibility(current);
+
         ((void (*)())(g_libGTASA + (VER_x32 ? 0x00437B0C + 1 : 0x51CFF0)))();
 
         if (current <= 16 || (current % 120u) == 0u)
-            FLog("RADAR STEP4 DRAW: CHud::DrawRadar called | seq=%u", current);
+            FLog("RADAR STEP5 DRAW: CHud::DrawRadar called | seq=%u", current);
     }
 
     if (current <= 16)
@@ -5592,7 +5642,7 @@ void InstallHooks()
     // The old CWidgetRadar::InjectHooks() line lived inside InstallSpecialHooks/InjectHooks,
     // which is not executed in the current startup path. Keep this test isolated to radar.
     CWidgetRadar::InjectHooks();
-    FLog("RADAR STEP4 INSTALL: direct CHud::DrawRadar test + CWidgetRadar + original GetRadarTraceColour");
+    FLog("RADAR STEP5 INSTALL: force native radar visibility gates + direct CHud::DrawRadar");
     CHook::InlineHook("_Z14AND_TouchEventiiii", &AND_TouchEvent_hook, &AND_TouchEvent);
 	
     CHook::Redirect("_ZN11CHudColours12GetIntColourEh", &CHudColours__GetIntColour); // dangerous
@@ -5601,7 +5651,7 @@ void InstallHooks()
     // enabling CWidgetRadar does not bring the minimap back. Keep every other
     // render fix/hook unchanged for an isolated radar test.
     // CHook::Redirect("_ZN6CRadar19GetRadarTraceColourEjhh", &CRadar__GetRadarTraceColor); // disabled in STEP3
-    FLog("RADAR STEP4: original CRadar::GetRadarTraceColour kept");
+    FLog("RADAR STEP5: original CRadar::GetRadarTraceColour kept");
     CHook::InlineHook("_ZN6CRadar12SetCoordBlipE9eBlipType7CVectorj12eBlipDisplayPc", &CRadar__SetCoordBlip_hook, &CRadar__SetCoordBlip);
     CHook::InlineHook("_ZN6CRadar20DrawRadarGangOverlayEb", &CRadar_DrawRadarGangOverlay_hook, &CRadar_DrawRadarGangOverlay);
 
