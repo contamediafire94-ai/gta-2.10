@@ -1346,6 +1346,7 @@ static uint8_t* g_radarStep6WantsToDrawHud = nullptr;
 static void (*g_radarStep8DrawRadarMap)() = nullptr;
 static void (*g_radarStep9LoadTextures)() = nullptr;
 static void (*g_radarStep10Initialise)() = nullptr;
+static void (*g_radarStep11StreamRadarSections)(const CVector&) = nullptr;
 static bool g_radarStep9TexturesAttempted = false;
 static bool g_radarStep5Resolved = false;
 
@@ -1370,12 +1371,16 @@ static void RadarStep5ForceVisibility(unsigned int seq)
                     reinterpret_cast<void (*)()>(dlsym(gtasa, "_ZN6CRadar12LoadTexturesEv"));
             g_radarStep10Initialise =
                     reinterpret_cast<void (*)()>(dlsym(gtasa, "_ZN6CRadar10InitialiseEv"));
+            g_radarStep11StreamRadarSections =
+                    reinterpret_cast<void (*)(const CVector&)>(
+                            dlsym(gtasa, "_ZN6CRadar19StreamRadarSectionsERK7CVector"));
         }
 
-        FLog("RADAR STEP10 RESOLVED | displayHud=%p dontDisplayRadar=%p wantsHud=%p drawRadarMap=%p loadTextures=%p initialise=%p",
+        FLog("RADAR STEP11 RESOLVED | displayHud=%p dontDisplayRadar=%p wantsHud=%p drawRadarMap=%p loadTextures=%p initialise=%p stream=%p",
              g_radarStep5DisplayHud, g_radarStep5DontDisplayRadar,
              g_radarStep6WantsToDrawHud, (void*)g_radarStep8DrawRadarMap,
-             (void*)g_radarStep9LoadTextures, (void*)g_radarStep10Initialise);
+             (void*)g_radarStep9LoadTextures, (void*)g_radarStep10Initialise,
+             (void*)g_radarStep11StreamRadarSections);
     }
 
     if (g_radarStep5DisplayHud)
@@ -1398,7 +1403,7 @@ static void RadarStep5ForceVisibility(unsigned int seq)
         const int wantsHud =
                 g_radarStep6WantsToDrawHud ? (int)*g_radarStep6WantsToDrawHud : -1;
 
-        FLog("RADAR STEP10 GATES | seq=%u displayHud=%d dontDisplayRadar=%d wantsHud=%d",
+        FLog("RADAR STEP11 GATES | seq=%u displayHud=%d dontDisplayRadar=%d wantsHud=%d",
              seq, displayHud, dontDisplayRadar, wantsHud);
     }
 }
@@ -1448,22 +1453,45 @@ void Render2dStuff_V26_hook()
             if (g_radarStep10Initialise)
             {
                 g_radarStep10Initialise();
-                FLog("RADAR STEP10 INITIALISE: CRadar::Initialise called");
+                FLog("RADAR STEP11 INITIALISE: CRadar::Initialise called");
             }
             else
             {
-                FLog("RADAR STEP10 INITIALISE: symbol unavailable");
+                FLog("RADAR STEP11 INITIALISE: symbol unavailable");
             }
 
             if (g_radarStep9LoadTextures)
             {
                 g_radarStep9LoadTextures();
-                FLog("RADAR STEP10 LOADTEXTURES: CRadar::LoadTextures called");
+                FLog("RADAR STEP11 LOADTEXTURES: CRadar::LoadTextures called");
             }
             else
             {
-                FLog("RADAR STEP10 LOADTEXTURES: symbol unavailable");
+                FLog("RADAR STEP11 LOADTEXTURES: symbol unavailable");
             }
+        }
+
+        // STEP11:
+        // Init/load/draw are all proven to run. The missing native stage is the
+        // streaming request for the 3x3 radar tiles around the player.
+        // Feed the GTA player's real world position to CRadar::StreamRadarSections
+        // before DrawRadarMap, exactly where the minimap needs those sections.
+        if (g_radarStep11StreamRadarSections)
+        {
+            CPedGTA* gtaPed = GamePool_FindPlayerPed();
+            if (gtaPed)
+            {
+                CVector radarPos = gtaPed->GetPosition();
+                g_radarStep11StreamRadarSections(radarPos);
+
+                if (current <= 16 || (current % 120u) == 0u)
+                    FLog("RADAR STEP11 STREAM | seq=%u pos=%.2f,%.2f,%.2f",
+                         current, radarPos.x, radarPos.y, radarPos.z);
+            }
+        }
+        else if (current == 1)
+        {
+            FLog("RADAR STEP11 STREAM: symbol unavailable");
         }
 
         if (g_radarStep8DrawRadarMap)
@@ -1471,17 +1499,17 @@ void Render2dStuff_V26_hook()
             g_radarStep8DrawRadarMap();
 
             if (current <= 16 || (current % 120u) == 0u)
-                FLog("RADAR STEP10 RADARMAP: CRadar::DrawRadarMap called | seq=%u", current);
+                FLog("RADAR STEP11 RADARMAP: CRadar::DrawRadarMap called | seq=%u", current);
         }
         else if (current == 1)
         {
-            FLog("RADAR STEP10 RADARMAP: symbol unavailable");
+            FLog("RADAR STEP11 RADARMAP: symbol unavailable");
         }
 
         ((void (*)())(g_libGTASA + (VER_x32 ? 0x00437B0C + 1 : 0x51CFF0)))();
 
         if (current <= 16 || (current % 120u) == 0u)
-            FLog("RADAR STEP10 DRAWRADAR: CHud::DrawRadar called | seq=%u", current);
+            FLog("RADAR STEP11 DRAWRADAR: CHud::DrawRadar called | seq=%u", current);
     }
 
     if (current <= 16)
@@ -5706,7 +5734,7 @@ void InstallHooks()
     // The old CWidgetRadar::InjectHooks() line lived inside InstallSpecialHooks/InjectHooks,
     // which is not executed in the current startup path. Keep this test isolated to radar.
     CWidgetRadar::InjectHooks();
-    FLog("RADAR STEP10 INSTALL: one-time CRadar::Initialise + LoadTextures + DrawRadarMap");
+    FLog("RADAR STEP11 INSTALL: StreamRadarSections(playerPos) + STEP10 init/load/draw");
     CHook::InlineHook("_Z14AND_TouchEventiiii", &AND_TouchEvent_hook, &AND_TouchEvent);
 	
     CHook::Redirect("_ZN11CHudColours12GetIntColourEh", &CHudColours__GetIntColour); // dangerous
@@ -5715,7 +5743,7 @@ void InstallHooks()
     // enabling CWidgetRadar does not bring the minimap back. Keep every other
     // render fix/hook unchanged for an isolated radar test.
     // CHook::Redirect("_ZN6CRadar19GetRadarTraceColourEjhh", &CRadar__GetRadarTraceColor); // disabled in STEP3
-    FLog("RADAR STEP10: original CRadar::GetRadarTraceColour kept");
+    FLog("RADAR STEP11: original CRadar::GetRadarTraceColour kept");
     CHook::InlineHook("_ZN6CRadar12SetCoordBlipE9eBlipType7CVectorj12eBlipDisplayPc", &CRadar__SetCoordBlip_hook, &CRadar__SetCoordBlip);
     CHook::InlineHook("_ZN6CRadar20DrawRadarGangOverlayEb", &CRadar_DrawRadarGangOverlay_hook, &CRadar_DrawRadarGangOverlay);
 
