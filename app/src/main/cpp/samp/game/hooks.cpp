@@ -1347,6 +1347,14 @@ static void (*g_radarStep8DrawRadarMap)() = nullptr;
 static void (*g_radarStep9LoadTextures)() = nullptr;
 static void (*g_radarStep10Initialise)() = nullptr;
 static void (*g_radarStep11StreamRadarSections)(const CVector&) = nullptr;
+
+// RADAR STEP12 DIRECT:
+// On Android, widget id 161 is the native minimap/radar widget.
+// Resolve the real widget table and force ONLY this widget enabled.
+static void*** g_radarStep12WidgetsVar = nullptr;
+static void (*g_radarStep12SetEnabled)(void*, bool) = nullptr;
+static bool (*g_radarStep12GetEnabled)(void*) = nullptr;
+
 static bool g_radarStep9TexturesAttempted = false;
 static bool g_radarStep5Resolved = false;
 
@@ -1374,13 +1382,28 @@ static void RadarStep5ForceVisibility(unsigned int seq)
             g_radarStep11StreamRadarSections =
                     reinterpret_cast<void (*)(const CVector&)>(
                             dlsym(gtasa, "_ZN6CRadar19StreamRadarSectionsERK7CVector"));
+
+            g_radarStep12WidgetsVar =
+                    reinterpret_cast<void***>(
+                            dlsym(gtasa, "_ZN15CTouchInterface10m_pWidgetsE"));
+            g_radarStep12SetEnabled =
+                    reinterpret_cast<void (*)(void*, bool)>(
+                            dlsym(gtasa, "_ZN7CWidget10SetEnabledEb"));
+            g_radarStep12GetEnabled =
+                    reinterpret_cast<bool (*)(void*)>(
+                            dlsym(gtasa, "_ZN7CWidget10GetEnabledEv"));
         }
 
-        FLog("RADAR STEP11 RESOLVED | displayHud=%p dontDisplayRadar=%p wantsHud=%p drawRadarMap=%p loadTextures=%p initialise=%p stream=%p",
+        FLog("RADAR STEP12 RESOLVED | displayHud=%p dontDisplayRadar=%p wantsHud=%p drawRadarMap=%p loadTextures=%p initialise=%p stream=%p",
              g_radarStep5DisplayHud, g_radarStep5DontDisplayRadar,
              g_radarStep6WantsToDrawHud, (void*)g_radarStep8DrawRadarMap,
              (void*)g_radarStep9LoadTextures, (void*)g_radarStep10Initialise,
              (void*)g_radarStep11StreamRadarSections);
+
+        FLog("RADAR STEP12 WIDGET RESOLVED | widgetsVar=%p setEnabled=%p getEnabled=%p",
+             (void*)g_radarStep12WidgetsVar,
+             (void*)g_radarStep12SetEnabled,
+             (void*)g_radarStep12GetEnabled);
     }
 
     if (g_radarStep5DisplayHud)
@@ -1403,7 +1426,7 @@ static void RadarStep5ForceVisibility(unsigned int seq)
         const int wantsHud =
                 g_radarStep6WantsToDrawHud ? (int)*g_radarStep6WantsToDrawHud : -1;
 
-        FLog("RADAR STEP11 GATES | seq=%u displayHud=%d dontDisplayRadar=%d wantsHud=%d",
+        FLog("RADAR STEP12 GATES | seq=%u displayHud=%d dontDisplayRadar=%d wantsHud=%d",
              seq, displayHud, dontDisplayRadar, wantsHud);
     }
 }
@@ -1441,6 +1464,33 @@ void Render2dStuff_V26_hook()
     {
         RadarStep5ForceVisibility(current);
 
+        // STEP12 DIRECT:
+        // The native Android radar is widget 161. Force that single widget on
+        // before the explicit radar draw path below. Do not simulate touch input.
+        void** widgetTable =
+                (g_radarStep12WidgetsVar ? *g_radarStep12WidgetsVar : nullptr);
+        void* radarWidget = widgetTable ? widgetTable[161] : nullptr;
+
+        int radarEnabledBefore =
+                (radarWidget && g_radarStep12GetEnabled)
+                ? (g_radarStep12GetEnabled(radarWidget) ? 1 : 0)
+                : -1;
+
+        if (radarWidget && g_radarStep12SetEnabled)
+            g_radarStep12SetEnabled(radarWidget, true);
+
+        int radarEnabledAfter =
+                (radarWidget && g_radarStep12GetEnabled)
+                ? (g_radarStep12GetEnabled(radarWidget) ? 1 : 0)
+                : -1;
+
+        if (current <= 16 || (current % 120u) == 0u)
+        {
+            FLog("RADAR STEP12 WIDGET161 | seq=%u table=%p widget=%p before=%d after=%d",
+                 current, widgetTable, radarWidget,
+                 radarEnabledBefore, radarEnabledAfter);
+        }
+
         // STEP10:
         // STEP9 proved CRadar::LoadTextures executes, but that routine mainly
         // prepares radar/blip sprites. The native CRadar::Initialise path is the
@@ -1453,21 +1503,21 @@ void Render2dStuff_V26_hook()
             if (g_radarStep10Initialise)
             {
                 g_radarStep10Initialise();
-                FLog("RADAR STEP11 INITIALISE: CRadar::Initialise called");
+                FLog("RADAR STEP12 INITIALISE: CRadar::Initialise called");
             }
             else
             {
-                FLog("RADAR STEP11 INITIALISE: symbol unavailable");
+                FLog("RADAR STEP12 INITIALISE: symbol unavailable");
             }
 
             if (g_radarStep9LoadTextures)
             {
                 g_radarStep9LoadTextures();
-                FLog("RADAR STEP11 LOADTEXTURES: CRadar::LoadTextures called");
+                FLog("RADAR STEP12 LOADTEXTURES: CRadar::LoadTextures called");
             }
             else
             {
-                FLog("RADAR STEP11 LOADTEXTURES: symbol unavailable");
+                FLog("RADAR STEP12 LOADTEXTURES: symbol unavailable");
             }
         }
 
@@ -1485,13 +1535,13 @@ void Render2dStuff_V26_hook()
                 g_radarStep11StreamRadarSections(radarPos);
 
                 if (current <= 16 || (current % 120u) == 0u)
-                    FLog("RADAR STEP11 STREAM | seq=%u pos=%.2f,%.2f,%.2f",
+                    FLog("RADAR STEP12 STREAM | seq=%u pos=%.2f,%.2f,%.2f",
                          current, radarPos.x, radarPos.y, radarPos.z);
             }
         }
         else if (current == 1)
         {
-            FLog("RADAR STEP11 STREAM: symbol unavailable");
+            FLog("RADAR STEP12 STREAM: symbol unavailable");
         }
 
         if (g_radarStep8DrawRadarMap)
@@ -1499,17 +1549,17 @@ void Render2dStuff_V26_hook()
             g_radarStep8DrawRadarMap();
 
             if (current <= 16 || (current % 120u) == 0u)
-                FLog("RADAR STEP11 RADARMAP: CRadar::DrawRadarMap called | seq=%u", current);
+                FLog("RADAR STEP12 RADARMAP: CRadar::DrawRadarMap called | seq=%u", current);
         }
         else if (current == 1)
         {
-            FLog("RADAR STEP11 RADARMAP: symbol unavailable");
+            FLog("RADAR STEP12 RADARMAP: symbol unavailable");
         }
 
         ((void (*)())(g_libGTASA + (VER_x32 ? 0x00437B0C + 1 : 0x51CFF0)))();
 
         if (current <= 16 || (current % 120u) == 0u)
-            FLog("RADAR STEP11 DRAWRADAR: CHud::DrawRadar called | seq=%u", current);
+            FLog("RADAR STEP12 DRAWRADAR: CHud::DrawRadar called | seq=%u", current);
     }
 
     if (current <= 16)
@@ -5734,7 +5784,7 @@ void InstallHooks()
     // The old CWidgetRadar::InjectHooks() line lived inside InstallSpecialHooks/InjectHooks,
     // which is not executed in the current startup path. Keep this test isolated to radar.
     CWidgetRadar::InjectHooks();
-    FLog("RADAR STEP11 INSTALL: StreamRadarSections(playerPos) + STEP10 init/load/draw");
+    FLog("RADAR STEP12 INSTALL: force Android radar widget 161 + STEP11 native radar path");
     CHook::InlineHook("_Z14AND_TouchEventiiii", &AND_TouchEvent_hook, &AND_TouchEvent);
 	
     CHook::Redirect("_ZN11CHudColours12GetIntColourEh", &CHudColours__GetIntColour); // dangerous
@@ -5743,7 +5793,7 @@ void InstallHooks()
     // enabling CWidgetRadar does not bring the minimap back. Keep every other
     // render fix/hook unchanged for an isolated radar test.
     // CHook::Redirect("_ZN6CRadar19GetRadarTraceColourEjhh", &CRadar__GetRadarTraceColor); // disabled in STEP3
-    FLog("RADAR STEP11: original CRadar::GetRadarTraceColour kept");
+    FLog("RADAR STEP12: original CRadar::GetRadarTraceColour kept");
     CHook::InlineHook("_ZN6CRadar12SetCoordBlipE9eBlipType7CVectorj12eBlipDisplayPc", &CRadar__SetCoordBlip_hook, &CRadar__SetCoordBlip);
     CHook::InlineHook("_ZN6CRadar20DrawRadarGangOverlayEb", &CRadar_DrawRadarGangOverlay_hook, &CRadar_DrawRadarGangOverlay);
 
